@@ -1,0 +1,462 @@
+openapi: 3.0.3
+info:
+  title: Project & Task Service API
+  version: 1.0.0
+  description: API сервиса проектов, задач, комментариев, истории изменений и меток.
+servers:
+  - url: http://localhost:5002
+    description: Local Project & Task Service
+paths:
+  /projects:
+    post:
+      summary: Создать проект
+      tags: [Projects]
+      parameters:
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProjectRequest' }
+      responses:
+        '201':
+          description: Проект создан
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /projects/{projectId}:
+    get:
+      summary: Получить проект
+      tags: [Projects]
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdPath'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      responses:
+        '200':
+          description: Проект найден
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      summary: Редактировать проект
+      tags: [Projects]
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdPath'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProjectRequest' }
+      responses:
+        '200':
+          description: Проект изменен
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /projects/{projectId}/archive:
+    patch:
+      summary: Архивировать проект
+      tags: [Projects]
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdPath'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      responses:
+        '200':
+          description: Проект архивирован
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /projects/{projectId}/tasks:
+    post:
+      summary: Создать задачу в проекте
+      tags: [Tasks]
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdPath'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTaskRequest' }
+      responses:
+        '201':
+          description: Задача создана
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    get:
+      summary: Получить список задач проекта
+      tags: [Tasks]
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdPath'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      responses:
+        '200':
+          description: Список задач проекта
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TaskResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /tasks/{taskId}:
+    get:
+      summary: Получить задачу
+      tags: [Tasks]
+      parameters:
+        - $ref: '#/components/parameters/TaskIdPath'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      responses:
+        '200':
+          description: Задача найдена
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      summary: Редактировать задачу
+      tags: [Tasks]
+      parameters:
+        - $ref: '#/components/parameters/TaskIdPath'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateTaskRequest' }
+      responses:
+        '200':
+          description: Задача изменена
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      summary: Удалить задачу логически
+      tags: [Tasks]
+      parameters:
+        - $ref: '#/components/parameters/TaskIdPath'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      responses:
+        '204': { description: Задача удалена }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /tasks/{taskId}/assignee:
+    patch:
+      summary: Назначить исполнителя задачи
+      tags: [Tasks]
+      parameters:
+        - $ref: '#/components/parameters/TaskIdPath'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AssignTaskRequest' }
+      responses:
+        '200':
+          description: Исполнитель назначен
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /tasks/{taskId}/status:
+    patch:
+      summary: Изменить статус задачи
+      tags: [Tasks]
+      parameters:
+        - $ref: '#/components/parameters/TaskIdPath'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChangeTaskStatusRequest' }
+      responses:
+        '200':
+          description: Статус изменен
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+  /tasks/{taskId}/comments:
+    post:
+      summary: Добавить комментарий к задаче
+      tags: [Comments]
+      parameters:
+        - $ref: '#/components/parameters/TaskIdPath'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddCommentRequest' }
+      responses:
+        '201':
+          description: Комментарий создан
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CommentResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    get:
+      summary: Получить комментарии задачи
+      tags: [Comments]
+      parameters:
+        - $ref: '#/components/parameters/TaskIdPath'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      responses:
+        '200':
+          description: Комментарии задачи
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/CommentResponse' }
+  /comments/{commentId}:
+    delete:
+      summary: Удалить комментарий логически
+      tags: [Comments]
+      parameters:
+        - $ref: '#/components/parameters/CommentIdPath'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      responses:
+        '204': { description: Комментарий удален }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /tasks/{taskId}/history:
+    get:
+      summary: Получить историю изменений задачи
+      tags: [TaskHistory]
+      parameters:
+        - $ref: '#/components/parameters/TaskIdPath'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      responses:
+        '200':
+          description: История изменений задачи
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TaskHistoryResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /projects/{projectId}/labels:
+    post:
+      summary: Создать метку проекта
+      tags: [Labels]
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdPath'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateLabelRequest' }
+      responses:
+        '201':
+          description: Метка создана
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LabelResponse' }
+    get:
+      summary: Получить метки проекта
+      tags: [Labels]
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdPath'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      responses:
+        '200':
+          description: Список меток
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/LabelResponse' }
+  /tasks/{taskId}/labels/{labelId}:
+    post:
+      summary: Назначить метку задаче
+      tags: [Labels]
+      parameters:
+        - $ref: '#/components/parameters/TaskIdPath'
+        - $ref: '#/components/parameters/LabelIdPath'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      responses:
+        '204': { description: Метка назначена }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      summary: Убрать метку с задачи
+      tags: [Labels]
+      parameters:
+        - $ref: '#/components/parameters/TaskIdPath'
+        - $ref: '#/components/parameters/LabelIdPath'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      responses:
+        '204': { description: Метка убрана }
+components:
+  parameters:
+    ActorUserIdHeader:
+      name: X-User-Id
+      in: header
+      required: true
+      schema: { type: string, format: uuid }
+    ProjectIdPath:
+      name: projectId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    TaskIdPath:
+      name: taskId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    CommentIdPath:
+      name: commentId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    LabelIdPath:
+      name: labelId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  schemas:
+    TaskStatus:
+      type: string
+      enum: [TODO, IN_PROGRESS, REVIEW, DONE]
+    CreateProjectRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, example: OOP Project }
+        description: { type: string, nullable: true }
+    UpdateProjectRequest:
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string, nullable: true }
+    ProjectResponse:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        createdByUserId: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        isArchived: { type: boolean }
+    CreateTaskRequest:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string }
+        description: { type: string, nullable: true }
+        assigneeUserId: { type: string, format: uuid, nullable: true }
+    UpdateTaskRequest:
+      type: object
+      properties:
+        title: { type: string }
+        description: { type: string, nullable: true }
+    AssignTaskRequest:
+      type: object
+      required: [assigneeUserId]
+      properties:
+        assigneeUserId: { type: string, format: uuid }
+    ChangeTaskStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status: { $ref: '#/components/schemas/TaskStatus' }
+    TaskResponse:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: string, nullable: true }
+        status: { $ref: '#/components/schemas/TaskStatus' }
+        assigneeUserId: { type: string, format: uuid, nullable: true }
+        createdByUserId: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    AddCommentRequest:
+      type: object
+      required: [text]
+      properties:
+        text: { type: string }
+    CommentResponse:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        taskId: { type: string, format: uuid }
+        authorUserId: { type: string, format: uuid }
+        text: { type: string }
+        createdAt: { type: string, format: date-time }
+        isDeleted: { type: boolean }
+    TaskHistoryResponse:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        taskId: { type: string, format: uuid }
+        changedByUserId: { type: string, format: uuid }
+        changeType: { type: string, enum: [Created, StatusChanged, AssigneeChanged, TitleChanged, DescriptionChanged, Deleted] }
+        oldValue: { type: string, nullable: true }
+        newValue: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+    CreateLabelRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, example: backend }
+    LabelResponse:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        name: { type: string }
+        isActive: { type: boolean }
+    ErrorResponse:
+      type: object
+      properties:
+        code: { type: string }
+        message: { type: string }
+        details: { type: object, additionalProperties: true }
+  responses:
+    BadRequest:
+      description: Ошибка валидации или некорректный формат данных
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Unauthorized:
+      description: Не передан X-User-Id
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Forbidden:
+      description: Недостаточно прав
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    NotFound:
+      description: Сущность не найдена
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Conflict:
+      description: Конфликт бизнес-правил
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    UnprocessableEntity:
+      description: Нарушение workflow или доменного ограничения
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }

@@ -1,0 +1,28 @@
+services:
+  user-access-db:
+    image: postgres:16
+    container_name: user-access-db
+    environment:
+      POSTGRES_DB: user_access_db
+      POSTGRES_USER: user_access_user
+      POSTGRES_PASSWORD: user_access_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - user_access_data:/var/lib/postgresql/data
+
+  project-task-db:
+    image: postgres:16
+    container_name: project-task-db
+    environment:
+      POSTGRES_DB: project_task_db
+      POSTGRES_USER: project_task_user
+      POSTGRES_PASSWORD: project_task_password
+    ports:
+      - "5434:5432"
+    volumes:
+      - project_task_data:/var/lib/postgresql/data
+
+volumes:
+  user_access_data:
+  project_task_data:

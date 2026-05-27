@@ -1,0 +1,266 @@
+openapi: 3.0.3
+info:
+  title: User & Access Service API
+  version: 1.0.0
+  description: API сервиса пользователей, участников проектов, ролей и проверки доступа.
+servers:
+  - url: http://localhost:5001
+    description: Local User & Access Service
+paths:
+  /users:
+    post:
+      summary: Создать пользователя
+      tags: [Users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: Пользователь создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    get:
+      summary: Получить список пользователей
+      tags: [Users]
+      parameters:
+        - name: isActive
+          in: query
+          required: false
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: Список пользователей
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/UserResponse' }
+  /users/{userId}:
+    get:
+      summary: Получить пользователя по id
+      tags: [Users]
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        '200':
+          description: Пользователь найден
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /users/{userId}/deactivate:
+    patch:
+      summary: Деактивировать пользователя
+      tags: [Users]
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        '200':
+          description: Пользователь деактивирован
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /projects/{projectId}/members:
+    post:
+      summary: Добавить участника в проект
+      tags: [ProjectMembers]
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdPath'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddProjectMemberRequest' }
+      responses:
+        '201':
+          description: Участник добавлен
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectMemberResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    get:
+      summary: Получить список участников проекта
+      tags: [ProjectMembers]
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdPath'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      responses:
+        '200':
+          description: Список участников
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ProjectMemberResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /projects/{projectId}/members/{userId}/role:
+    patch:
+      summary: Изменить роль участника проекта
+      tags: [ProjectMembers]
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdPath'
+        - $ref: '#/components/parameters/UserIdPath'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChangeMemberRoleRequest' }
+      responses:
+        '200':
+          description: Роль изменена
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectMemberResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /projects/{projectId}/members/{userId}:
+    delete:
+      summary: Удалить участника из проекта
+      tags: [ProjectMembers]
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdPath'
+        - $ref: '#/components/parameters/UserIdPath'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      responses:
+        '204': { description: Участник удален }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /access/check:
+    post:
+      summary: Проверить доступ пользователя к действию в проекте
+      tags: [Access]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AccessCheckRequest' }
+      responses:
+        '200':
+          description: Результат проверки доступа
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccessCheckResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+components:
+  parameters:
+    UserIdPath:
+      name: userId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ProjectIdPath:
+      name: projectId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ActorUserIdHeader:
+      name: X-User-Id
+      in: header
+      required: true
+      schema: { type: string, format: uuid }
+  schemas:
+    ProjectRole:
+      type: string
+      enum: [Owner, Admin, Member]
+    ProjectAction:
+      type: string
+      enum: [ViewProject, ViewTask, ManageProject, AddMember, RemoveMember, ChangeMemberRole, CreateTask, AssignTask, ChangeTaskStatus, AddComment, EditTask, DeleteTask, DeleteComment, ViewTaskHistory, ArchiveProject]
+    CreateUserRequest:
+      type: object
+      required: [fullName, email]
+      properties:
+        fullName: { type: string, example: Иван Петров }
+        email: { type: string, format: email, example: ivan@example.com }
+    UserResponse:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        fullName: { type: string }
+        email: { type: string, format: email }
+        createdAt: { type: string, format: date-time }
+        isActive: { type: boolean }
+    AddProjectMemberRequest:
+      type: object
+      required: [userId, role]
+      properties:
+        userId: { type: string, format: uuid }
+        role: { $ref: '#/components/schemas/ProjectRole' }
+    ChangeMemberRoleRequest:
+      type: object
+      required: [role]
+      properties:
+        role: { $ref: '#/components/schemas/ProjectRole' }
+    ProjectMemberResponse:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        role: { $ref: '#/components/schemas/ProjectRole' }
+        joinedAt: { type: string, format: date-time }
+        isActive: { type: boolean }
+    AccessCheckRequest:
+      type: object
+      required: [userId, projectId, action]
+      properties:
+        userId: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        action: { $ref: '#/components/schemas/ProjectAction' }
+    AccessCheckResponse:
+      type: object
+      properties:
+        allowed: { type: boolean }
+        userId: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        action: { $ref: '#/components/schemas/ProjectAction' }
+        role:
+          nullable: true
+          allOf: [ { $ref: '#/components/schemas/ProjectRole' } ]
+        reason:
+          type: string
+          nullable: true
+    ErrorResponse:
+      type: object
+      properties:
+        code: { type: string }
+        message: { type: string }
+        details: { type: object, additionalProperties: true }
+  responses:
+    BadRequest:
+      description: Ошибка валидации или некорректный формат данных
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Unauthorized:
+      description: Не передан X-User-Id
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Forbidden:
+      description: Недостаточно прав
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    NotFound:
+      description: Сущность не найдена
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Conflict:
+      description: Конфликт бизнес-правил
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
