@@ -25,37 +25,37 @@ public class UsersController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(fullName))
         {
-            return BadRequest(new
+            return BadRequest(new ErrorResponse
             {
-                code = "VALIDATION_ERROR",
-                message = "FullName is required"
+                Code = "VALIDATION_ERROR",
+                Message = "FullName is required"
             });
         }
 
         if (string.IsNullOrWhiteSpace(email))
         {
-            return BadRequest(new
+            return BadRequest(new ErrorResponse
             {
-                code = "VALIDATION_ERROR",
-                message = "Email is required"
+                Code = "VALIDATION_ERROR",
+                Message = "Email is required"
             });
         }
 
         if (fullName.Length > 200)
         {
-            return BadRequest(new
+            return BadRequest(new ErrorResponse
             {
-                code = "VALIDATION_ERROR",
-                message = "FullName must be less than or equal to 200 characters"
+                Code = "VALIDATION_ERROR",
+                Message = "FullName must be less than or equal to 200 characters"
             });
         }
 
         if (email.Length > 320)
         {
-            BadRequest(new
+            BadRequest(new ErrorResponse
             {
-                code = "VALIDATION_ERROR",
-                message = "Email must be less than or equal to 320 characters"
+                Code = "VALIDATION_ERROR",
+                Message = "Email must be less than or equal to 320 characters"
             });
         }
 
@@ -63,10 +63,10 @@ public class UsersController : ControllerBase
 
         if (emailAlreadyExists)
         {
-            return Conflict(new
+            return Conflict(new ErrorResponse
             {
-                code = "EMAIL_ALREADY_EXISTS",
-                message = "User with this email already exists"
+                Code = "EMAIL_ALREADY_EXISTS",
+                Message = "User with this email already exists"
             });
         }
 
@@ -105,10 +105,10 @@ public class UsersController : ControllerBase
 
         if (user is null)
         {
-            return NotFound(new
+            return NotFound(new ErrorResponse
             {
-                code = "USER_NOT_FOUND",
-                message = "User not found"
+                Code = "USER_NOT_FOUND",
+                Message = "User not found"
             });
         }
 
@@ -122,19 +122,19 @@ public class UsersController : ControllerBase
 
         if (user is null)
         {
-            return NotFound(new
+            return NotFound(new ErrorResponse
             {
-                code ="USER_NOT_FOUND",
-                message = "User not found"
+                Code ="USER_NOT_FOUND",
+                Message = "User not found"
             });
         }
 
         if (!user.IsActive)
         {
-            return Conflict(new
+            return Conflict(new ErrorResponse
             {
-                code = "USER_ALREADY_INACTIVE",
-                message = "User is already inactive"
+                Code = "USER_ALREADY_INACTIVE",
+                Message = "User is already inactive"
             });
         }
 

@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using UserAccessService.Clients.ProjectTask;
 using UserAccessService.Data;
 using UserAccessService.Dtos;
 using UserAccessService.Entities;
@@ -14,20 +15,24 @@ public class ProjectMembersController : ControllerBase
 {
     private readonly UserAccessDbContext _dbContext;
     private readonly IAccessPolicy _accessPolicy;
+    private readonly IProjectTaskClient _projectTaskClient;
 
     public ProjectMembersController(
         UserAccessDbContext dbContext,
-        IAccessPolicy accessPolicy)
+        IAccessPolicy accessPolicy,
+        IProjectTaskClient projectTaskClient)
     {
         _dbContext = dbContext;
         _accessPolicy = accessPolicy;
+        _projectTaskClient = projectTaskClient;
     }
 
     [HttpPost]
     public async Task<ActionResult<ProjectMemberResponse>> AddMember(
         Guid projectId,
         [FromHeader(Name = "X-User-Id")] Guid actorUserId,
-        AddProjectMemberRequest request)
+        AddProjectMemberRequest request,
+        CancellationToken cancellationToken)
     {
         if (actorUserId == Guid.Empty)
         {
@@ -36,6 +41,15 @@ public class ProjectMembersController : ControllerBase
                 Code = "USER_ID_REQUIRED",
                 Message = "X-User-Id header is required"
             });
+        }
+
+        var projectError = await ValidateProjectForMemberChangesAsync(
+            projectId,
+            cancellationToken);
+
+        if (projectError is not null)
+        {
+            return projectError;
         }
 
         if (request.UserId == Guid.Empty)
@@ -57,7 +71,9 @@ public class ProjectMembersController : ControllerBase
         }
 
         var targetUser = await _dbContext.Users
-            .FirstOrDefaultAsync(user => user.Id == request.UserId);
+            .FirstOrDefaultAsync(
+                user => user.Id == request.UserId,
+                cancellationToken);
 
         if (targetUser is null)
         {
@@ -78,11 +94,14 @@ public class ProjectMembersController : ControllerBase
         }
 
         var hasActiveMembers = await _dbContext.ProjectMembers
-            .AnyAsync(member => member.ProjectId == projectId && member.IsActive);
+            .AnyAsync(
+                member => member.ProjectId == projectId && member.IsActive,
+                cancellationToken);
 
         if (!hasActiveMembers)
         {
             var firstMemberResult = ValidateFirstProjectMember(actorUserId, request);
+
             if (firstMemberResult is not null)
             {
                 return firstMemberResult;
@@ -93,7 +112,8 @@ public class ProjectMembersController : ControllerBase
             var actorHasAccess = await ActorHasAccessAsync(
                 actorUserId,
                 projectId,
-                ProjectAction.AddMember);
+                ProjectAction.AddMember,
+                cancellationToken);
 
             if (!actorHasAccess)
             {
@@ -106,9 +126,11 @@ public class ProjectMembersController : ControllerBase
         }
 
         var existingMember = await _dbContext.ProjectMembers
-            .FirstOrDefaultAsync(member =>
-                member.ProjectId == projectId &&
-                member.UserId == request.UserId);
+            .FirstOrDefaultAsync(
+                member =>
+                    member.ProjectId == projectId &&
+                    member.UserId == request.UserId,
+                cancellationToken);
 
         if (existingMember is not null && existingMember.IsActive)
         {
@@ -144,7 +166,7 @@ public class ProjectMembersController : ControllerBase
             _dbContext.ProjectMembers.Add(member);
         }
 
-        await _dbContext.SaveChangesAsync();
+        await _dbContext.SaveChangesAsync(cancellationToken);
 
         return Created(
             $"/projects/{projectId}/members/{member.UserId}",
@@ -154,7 +176,8 @@ public class ProjectMembersController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<List<ProjectMemberResponse>>> GetMembers(
         Guid projectId,
-        [FromHeader(Name = "X-User-Id")] Guid actorUserId)
+        [FromHeader(Name = "X-User-Id")] Guid actorUserId,
+        CancellationToken cancellationToken)
     {
         if (actorUserId == Guid.Empty)
         {
@@ -165,10 +188,20 @@ public class ProjectMembersController : ControllerBase
             });
         }
 
+        var projectError = await ValidateProjectExistsAsync(
+            projectId,
+            cancellationToken);
+
+        if (projectError is not null)
+        {
+            return projectError;
+        }
+
         var actorHasAccess = await ActorHasAccessAsync(
             actorUserId,
             projectId,
-            ProjectAction.ViewProject);
+            ProjectAction.ViewProject,
+            cancellationToken);
 
         if (!actorHasAccess)
         {
@@ -183,7 +216,7 @@ public class ProjectMembersController : ControllerBase
             .Where(member => member.ProjectId == projectId && member.IsActive)
             .OrderBy(member => member.JoinedAt)
             .Select(member => ToResponse(member))
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
         return Ok(members);
     }
@@ -193,7 +226,8 @@ public class ProjectMembersController : ControllerBase
         Guid projectId,
         Guid userId,
         [FromHeader(Name = "X-User-Id")] Guid actorUserId,
-        ChangeMemberRoleRequest request)
+        ChangeMemberRoleRequest request,
+        CancellationToken cancellationToken)
     {
         if (actorUserId == Guid.Empty)
         {
@@ -201,6 +235,24 @@ public class ProjectMembersController : ControllerBase
             {
                 Code = "USER_ID_REQUIRED",
                 Message = "X-User-Id header is required"
+            });
+        }
+
+        var projectError = await ValidateProjectForMemberChangesAsync(
+            projectId,
+            cancellationToken);
+
+        if (projectError is not null)
+        {
+            return projectError;
+        }
+
+        if (userId == Guid.Empty)
+        {
+            return BadRequest(new ErrorResponse
+            {
+                Code = "VALIDATION_ERROR",
+                Message = "UserId cannot be empty"
             });
         }
 
@@ -216,7 +268,8 @@ public class ProjectMembersController : ControllerBase
         var actorHasAccess = await ActorHasAccessAsync(
             actorUserId,
             projectId,
-            ProjectAction.ChangeMemberRole);
+            ProjectAction.ChangeMemberRole,
+            cancellationToken);
 
         if (!actorHasAccess)
         {
@@ -228,10 +281,12 @@ public class ProjectMembersController : ControllerBase
         }
 
         var member = await _dbContext.ProjectMembers
-            .FirstOrDefaultAsync(member =>
-                member.ProjectId == projectId &&
-                member.UserId == userId &&
-                member.IsActive);
+            .FirstOrDefaultAsync(
+                member =>
+                    member.ProjectId == projectId &&
+                    member.UserId == userId &&
+                    member.IsActive,
+                cancellationToken);
 
         if (member is null)
         {
@@ -244,7 +299,9 @@ public class ProjectMembersController : ControllerBase
 
         if (member.Role == ProjectRole.Owner && request.Role != ProjectRole.Owner)
         {
-            var activeOwnerCount = await CountActiveOwnersAsync(projectId);
+            var activeOwnerCount = await CountActiveOwnersAsync(
+                projectId,
+                cancellationToken);
 
             if (activeOwnerCount <= 1)
             {
@@ -258,7 +315,7 @@ public class ProjectMembersController : ControllerBase
 
         member.Role = request.Role;
 
-        await _dbContext.SaveChangesAsync();
+        await _dbContext.SaveChangesAsync(cancellationToken);
 
         return Ok(ToResponse(member));
     }
@@ -267,7 +324,8 @@ public class ProjectMembersController : ControllerBase
     public async Task<IActionResult> RemoveMember(
         Guid projectId,
         Guid userId,
-        [FromHeader(Name = "X-User-Id")] Guid actorUserId)
+        [FromHeader(Name = "X-User-Id")] Guid actorUserId,
+        CancellationToken cancellationToken)
     {
         if (actorUserId == Guid.Empty)
         {
@@ -278,10 +336,29 @@ public class ProjectMembersController : ControllerBase
             });
         }
 
+        var projectError = await ValidateProjectForMemberChangesAsync(
+            projectId,
+            cancellationToken);
+
+        if (projectError is not null)
+        {
+            return projectError;
+        }
+
+        if (userId == Guid.Empty)
+        {
+            return BadRequest(new ErrorResponse
+            {
+                Code = "VALIDATION_ERROR",
+                Message = "UserId cannot be empty"
+            });
+        }
+
         var actorHasAccess = await ActorHasAccessAsync(
             actorUserId,
             projectId,
-            ProjectAction.RemoveMember);
+            ProjectAction.RemoveMember,
+            cancellationToken);
 
         if (!actorHasAccess)
         {
@@ -293,10 +370,12 @@ public class ProjectMembersController : ControllerBase
         }
 
         var member = await _dbContext.ProjectMembers
-            .FirstOrDefaultAsync(member =>
-                member.ProjectId == projectId &&
-                member.UserId == userId &&
-                member.IsActive);
+            .FirstOrDefaultAsync(
+                member =>
+                    member.ProjectId == projectId &&
+                    member.UserId == userId &&
+                    member.IsActive,
+                cancellationToken);
 
         if (member is null)
         {
@@ -309,7 +388,9 @@ public class ProjectMembersController : ControllerBase
 
         if (member.Role == ProjectRole.Owner)
         {
-            var activeOwnerCount = await CountActiveOwnersAsync(projectId);
+            var activeOwnerCount = await CountActiveOwnersAsync(
+                projectId,
+                cancellationToken);
 
             if (activeOwnerCount <= 1)
             {
@@ -323,12 +404,97 @@ public class ProjectMembersController : ControllerBase
 
         member.IsActive = false;
 
-        await _dbContext.SaveChangesAsync();
+        await _dbContext.SaveChangesAsync(cancellationToken);
 
         return NoContent();
     }
 
-    private ActionResult<ProjectMemberResponse>? ValidateFirstProjectMember(
+    private async Task<ActionResult?> ValidateProjectForMemberChangesAsync(
+        Guid projectId,
+        CancellationToken cancellationToken)
+    {
+        if (projectId == Guid.Empty)
+        {
+            return BadRequest(new ErrorResponse
+            {
+                Code = "VALIDATION_ERROR",
+                Message = "ProjectId cannot be empty"
+            });
+        }
+
+        var projectStatus = await _projectTaskClient.GetProjectStatusAsync(
+            projectId,
+            cancellationToken);
+
+        if (projectStatus is null)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, new ErrorResponse
+            {
+                Code = "PROJECT_TASK_SERVICE_ERROR",
+                Message = "Could not check project status in ProjectTaskService"
+            });
+        }
+
+        if (!projectStatus.Exists)
+        {
+            return NotFound(new ErrorResponse
+            {
+                Code = "PROJECT_NOT_FOUND",
+                Message = "Project not found"
+            });
+        }
+
+        if (projectStatus.IsArchived)
+        {
+            return Conflict(new ErrorResponse
+            {
+                Code = "PROJECT_ARCHIVED",
+                Message = "Cannot change members of archived project"
+            });
+        }
+
+        return null;
+    }
+
+    private async Task<ActionResult?> ValidateProjectExistsAsync(
+        Guid projectId,
+        CancellationToken cancellationToken)
+    {
+        if (projectId == Guid.Empty)
+        {
+            return BadRequest(new ErrorResponse
+            {
+                Code = "VALIDATION_ERROR",
+                Message = "ProjectId cannot be empty"
+            });
+        }
+
+        var projectStatus = await _projectTaskClient.GetProjectStatusAsync(
+            projectId,
+            cancellationToken);
+
+        if (projectStatus is null)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, new ErrorResponse
+            {
+                Code = "PROJECT_TASK_SERVICE_ERROR",
+                Message = "Could not check project status in ProjectTaskService"
+            });
+        }
+
+        if (!projectStatus.Exists)
+        {
+            return NotFound(new ErrorResponse
+            {
+                Code = "PROJECT_NOT_FOUND",
+                Message = "Project not found"
+            });
+        }
+
+        return null;
+    }
+
+    private ActionResult? ValidateFirstProjectMember(
         Guid actorUserId,
         AddProjectMemberRequest request)
     {
@@ -356,10 +522,13 @@ public class ProjectMembersController : ControllerBase
     private async Task<bool> ActorHasAccessAsync(
         Guid actorUserId,
         Guid projectId,
-        ProjectAction action)
+        ProjectAction action,
+        CancellationToken cancellationToken)
     {
         var actor = await _dbContext.Users
-            .FirstOrDefaultAsync(user => user.Id == actorUserId);
+            .FirstOrDefaultAsync(
+                user => user.Id == actorUserId,
+                cancellationToken);
 
         if (actor is null || !actor.IsActive)
         {
@@ -367,10 +536,12 @@ public class ProjectMembersController : ControllerBase
         }
 
         var actorMembership = await _dbContext.ProjectMembers
-            .FirstOrDefaultAsync(member =>
-                member.ProjectId == projectId &&
-                member.UserId == actorUserId &&
-                member.IsActive);
+            .FirstOrDefaultAsync(
+                member =>
+                    member.ProjectId == projectId &&
+                    member.UserId == actorUserId &&
+                    member.IsActive,
+                cancellationToken);
 
         if (actorMembership is null)
         {
@@ -380,13 +551,17 @@ public class ProjectMembersController : ControllerBase
         return _accessPolicy.IsAllowed(actorMembership.Role, action);
     }
 
-    private async Task<int> CountActiveOwnersAsync(Guid projectId)
+    private async Task<int> CountActiveOwnersAsync(
+        Guid projectId,
+        CancellationToken cancellationToken)
     {
         return await _dbContext.ProjectMembers
-            .CountAsync(member =>
-                member.ProjectId == projectId &&
-                member.Role == ProjectRole.Owner &&
-                member.IsActive);
+            .CountAsync(
+                member =>
+                    member.ProjectId == projectId &&
+                    member.Role == ProjectRole.Owner &&
+                    member.IsActive,
+                cancellationToken);
     }
 
     private static ProjectMemberResponse ToResponse(ProjectMember member)
