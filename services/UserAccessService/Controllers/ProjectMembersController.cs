@@ -409,6 +409,27 @@ public class ProjectMembersController : ControllerBase
         return NoContent();
     }
 
+    [HttpGet("{userId:guid}/is-member")]
+    public async Task<IActionResult> IsMember(
+        Guid projectId,
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        if (projectId == Guid.Empty || userId == Guid.Empty)
+        {
+            return BadRequest(new ErrorResponse
+            {
+                Code = "VALIDATION_ERROR",
+                Message = "ProjectId and UserId must be provided"
+            });
+        }
+
+    var exists = await _dbContext.ProjectMembers
+        .AnyAsync(pm => pm.ProjectId == projectId && pm.UserId == userId && pm.IsActive, cancellationToken);
+
+    return Ok(new { isMember = exists });
+    }
+
     private async Task<ActionResult?> ValidateProjectForMemberChangesAsync(
         Guid projectId,
         CancellationToken cancellationToken)

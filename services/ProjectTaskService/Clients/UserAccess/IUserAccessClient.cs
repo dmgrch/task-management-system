@@ -18,4 +18,6 @@ public interface IUserAccessClient
         Guid projectId,
         ProjectAction action,
         CancellationToken cancellationToken);
+    
+    Task<bool> IsMemberAsync(Guid userId, Guid projectId, CancellationToken cancellationToken);
 }
