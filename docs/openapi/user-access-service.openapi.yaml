@@ -138,6 +138,21 @@ paths:
         '204': { description: Участник удален }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
+  /projects/{projectId}/members/{userId}/is-member:
+    get:
+      summary: Проверить, участвует ли юзер в проекте
+      tags: [ProjectMembers]
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdPath'
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        '200':
+          description: Результат проверки участия пользователя в проекте
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectMembershipCheckResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /access/check:
     post:
       summary: Проверить доступ пользователя к действию в проекте
@@ -212,6 +227,14 @@ components:
         role: { $ref: '#/components/schemas/ProjectRole' }
         joinedAt: { type: string, format: date-time }
         isActive: { type: boolean }
+    ProjectMembershipCheckResponse:
+      type: object
+      required:
+        - isMember
+      properties:
+        isMember:
+          type: boolean
+          description: true, если пользователь является активным участником проекта
     AccessCheckRequest:
       type: object
       required: [userId, projectId, action]

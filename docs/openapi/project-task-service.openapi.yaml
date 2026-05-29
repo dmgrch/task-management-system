@@ -95,7 +95,7 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
     get:
       summary: Получить список задач проекта
-      tags: [Tasks]
+      tags: [Projects]
       parameters:
         - $ref: '#/components/parameters/ProjectIdPath'
         - $ref: '#/components/parameters/ActorUserIdHeader'
@@ -123,7 +123,7 @@ paths:
               schema: { $ref: '#/components/schemas/TaskResponse' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
-    patch:
+    put:
       summary: Редактировать задачу
       tags: [Tasks]
       parameters:
@@ -233,7 +233,7 @@ paths:
       responses:
         '204': { description: Комментарий удален }
         '403': { $ref: '#/components/responses/Forbidden' }
-  /tasks/{taskId}/history:
+  /tasks-history/tasks/{taskId}:
     get:
       summary: Получить историю изменений задачи
       tags: [TaskHistory]
@@ -387,6 +387,10 @@ components:
         createdByUserId: { type: string, format: uuid }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+        labels:
+          type: array
+          items:
+            $ref: '#/components/schemas/LabelResponse'
     AddCommentRequest:
       type: object
       required: [text]
