@@ -50,6 +50,31 @@ namespace ProjectTaskService.Data.Migrations
                     b.ToTable("comments", (string)null);
                 });
 
+            modelBuilder.Entity("ProjectTaskService.Entities.Label", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "Name")
+                        .IsUnique();
+
+                    b.ToTable("labels", (string)null);
+                });
+
             modelBuilder.Entity("ProjectTaskService.Entities.Project", b =>
                 {
                     b.Property<Guid>("Id")
@@ -151,6 +176,19 @@ namespace ProjectTaskService.Data.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("tasks", (string)null);
+                });
+
+            modelBuilder.Entity("ProjectTaskService.Entities.TaskLabel", b =>
+                {
+                    b.Property<Guid>("TaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("LabelId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("TaskId", "LabelId");
+
+                    b.ToTable("task_labels", (string)null);
                 });
 #pragma warning restore 612, 618
         }
