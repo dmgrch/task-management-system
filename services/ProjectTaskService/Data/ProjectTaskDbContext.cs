@@ -13,6 +13,7 @@ public class ProjectTaskDbContext : DbContext
     public DbSet<Project> Projects => Set<Project>();
     public DbSet<TaskItem> Tasks => Set<TaskItem>();
     public DbSet<TaskHistory> TaskHistories => Set<TaskHistory>();
+    public DbSet<Comment> Comments => Set<Comment>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -21,6 +22,7 @@ public class ProjectTaskDbContext : DbContext
         ConfigureProject(modelBuilder);
         ConfigureTask(modelBuilder);
         ConfigureTaskHistory(modelBuilder);
+        ConfigureComment(modelBuilder);
     }
 
     private static void ConfigureProject(ModelBuilder modelBuilder)
@@ -78,5 +80,17 @@ public class ProjectTaskDbContext : DbContext
     history.Property(x => x.OldValue);
     history.Property(x => x.NewValue);
     history.Property(x => x.CreatedAt).IsRequired();
+    }
+
+    private static void ConfigureComment(ModelBuilder modelBuilder)
+    {
+        var comment = modelBuilder.Entity<Comment>();
+        comment.ToTable("comments");
+        comment.HasKey(x => x.Id);
+        comment.Property(x => x.TaskId).IsRequired();
+        comment.Property(x => x.AuthorUserId).IsRequired();
+        comment.Property(x => x.Text).IsRequired().HasMaxLength(5000);
+        comment.Property(x => x.CreatedAt).IsRequired();
+        comment.Property(x => x.IsDeleted).IsRequired();
     }
 }
