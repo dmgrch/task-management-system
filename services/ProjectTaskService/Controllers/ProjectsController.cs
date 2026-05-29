@@ -358,6 +358,45 @@ public class ProjectsController : ControllerBase
         return Ok(ToResponse(project));
     }
 
+    [HttpGet("{projectId:guid}/tasks")]
+    public async Task<IActionResult> GetTasksByProject(
+    Guid projectId,
+    [FromHeader(Name = "X-User-Id")] Guid? actorUserId,
+    CancellationToken cancellationToken)
+    {
+        var project = await _dbContext.Projects
+            .FirstOrDefaultAsync(p => p.Id == projectId, cancellationToken);
+        if (project == null)
+            return NotFound(new ErrorResponse
+            {
+                Code = "PROJECT_NOT_FOUND",
+                Message = "Project not found"
+            });
+
+        var accessError = await ValidateAccessAsync(actorUserId, projectId, ProjectAction.ViewTask, cancellationToken);
+        if (accessError != null)
+            return accessError;
+
+        var tasks = await _dbContext.Tasks
+            .Where(t => t.ProjectId == projectId && !t.IsDeleted)
+            .OrderBy(t => t.CreatedAt)
+            .Select(t => new TaskResponse
+            {
+                Id = t.Id,
+                ProjectId = t.ProjectId,
+                Title = t.Title,
+                Description = t.Description,
+                Status = t.Status,
+                AssigneeUserId = t.AssigneeUserId,
+                CreatedByUserId = t.CreatedByUserId,
+                CreatedAt = t.CreatedAt,
+                UpdatedAt = t.UpdatedAt
+            })
+            .ToListAsync(cancellationToken);
+
+        return Ok(tasks);
+    }
+
     private async Task<IActionResult?> ValidateAccessAsync(
         Guid? actorUserId,
         Guid projectId,
