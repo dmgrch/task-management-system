@@ -9,7 +9,7 @@ using ProjectTaskService.Clients.UserAccess;
 namespace ProjectTaskService.Controllers;
 
 [ApiController]
-[Route("api/tasks")]
+[Route("tasks")]
 public class TasksController : ControllerBase
 {
     private readonly ProjectTaskDbContext _dbContext;
