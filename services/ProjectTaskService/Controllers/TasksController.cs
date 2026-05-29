@@ -128,17 +128,29 @@ public class TasksController : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
-    public async Task<IActionResult> GetTaskById(Guid id, [FromHeader(Name = "X-User-Id")] Guid? actorUserId,CancellationToken cancellationToken)
+    public async Task<IActionResult> GetTaskById(
+        Guid id,
+        [FromHeader(Name = "X-User-Id")] Guid? actorUserId,
+        CancellationToken cancellationToken)
     {
         var task = await _dbContext.Tasks
-            .FirstOrDefaultAsync(t => t.Id == id && !t.IsDeleted);
+            .FirstOrDefaultAsync(t => t.Id == id && !t.IsDeleted, cancellationToken);
+
         if (task == null)
             return NotFound(new { code = "TASK_NOT_FOUND", message = "Task not found" });
 
-        var accessError = await ValidateAccessAsync(actorUserId, task.ProjectId, ProjectAction.ViewTask, cancellationToken);
-        if (accessError != null) return accessError;
+        var accessError = await ValidateAccessAsync(
+            actorUserId,
+            task.ProjectId,
+            ProjectAction.ViewTask,
+            cancellationToken);
 
-        return Ok(ToResponse(task));
+        if (accessError != null)
+            return accessError;
+
+        var labels = await GetTaskLabelsAsync(task.Id, cancellationToken);
+
+        return Ok(ToResponse(task, labels));
     }
 
     [HttpPut("{id:guid}")]
@@ -328,6 +340,29 @@ public class TasksController : ControllerBase
         return NoContent();
     }
 
+    private async Task<List<LabelResponse>> GetTaskLabelsAsync(
+    Guid taskId,
+    CancellationToken cancellationToken)
+    {
+    return await _dbContext.TaskLabels
+        .Where(taskLabel => taskLabel.TaskId == taskId)
+        .Join(
+            _dbContext.Labels,
+            taskLabel => taskLabel.LabelId,
+            label => label.Id,
+            (taskLabel, label) => label)
+        .Where(label => label.IsActive)
+        .OrderBy(label => label.Name)
+        .Select(label => new LabelResponse
+        {
+            Id = label.Id,
+            ProjectId = label.ProjectId,
+            Name = label.Name,
+            IsActive = label.IsActive
+        })
+        .ToListAsync(cancellationToken);
+    }
+
     private static bool IsValidStatusTransition(TaskItemStatus from, TaskItemStatus to)
     {
         return (from, to) switch
@@ -339,7 +374,9 @@ public class TasksController : ControllerBase
         };
     }
 
-    private static TaskResponse ToResponse(TaskItem task)
+    private static TaskResponse ToResponse(
+    TaskItem task,
+    List<LabelResponse>? labels = null)
     {
         return new TaskResponse
         {
@@ -351,7 +388,8 @@ public class TasksController : ControllerBase
             AssigneeUserId = task.AssigneeUserId,
             CreatedByUserId = task.CreatedByUserId,
             CreatedAt = task.CreatedAt,
-            UpdatedAt = task.UpdatedAt
+            UpdatedAt = task.UpdatedAt,
+            Labels = labels ?? new List<LabelResponse>()
         };
     }
 }
