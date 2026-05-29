@@ -14,6 +14,8 @@ public class ProjectTaskDbContext : DbContext
     public DbSet<TaskItem> Tasks => Set<TaskItem>();
     public DbSet<TaskHistory> TaskHistories => Set<TaskHistory>();
     public DbSet<Comment> Comments => Set<Comment>();
+    public DbSet<Label> Labels => Set<Label>();
+    public DbSet<TaskLabel> TaskLabels => Set<TaskLabel>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -23,6 +25,8 @@ public class ProjectTaskDbContext : DbContext
         ConfigureTask(modelBuilder);
         ConfigureTaskHistory(modelBuilder);
         ConfigureComment(modelBuilder);
+        ConfigureLabel(modelBuilder);
+        ConfigureTaskLabel(modelBuilder);
     }
 
     private static void ConfigureProject(ModelBuilder modelBuilder)
@@ -92,5 +96,42 @@ public class ProjectTaskDbContext : DbContext
         comment.Property(x => x.Text).IsRequired().HasMaxLength(5000);
         comment.Property(x => x.CreatedAt).IsRequired();
         comment.Property(x => x.IsDeleted).IsRequired();
+    }
+
+    private static void ConfigureLabel(ModelBuilder modelBuilder)
+    {
+        var label = modelBuilder.Entity<Label>();
+
+        label.ToTable("labels");
+
+        label.HasKey(x => x.Id);
+
+        label.Property(x => x.ProjectId)
+            .IsRequired();
+
+        label.Property(x => x.Name)
+            .IsRequired()
+            .HasMaxLength(100);
+
+        label.Property(x => x.IsActive)
+            .IsRequired();
+
+        label.HasIndex(x => new { x.ProjectId, x.Name })
+            .IsUnique();
+    }
+
+private static void ConfigureTaskLabel(ModelBuilder modelBuilder)
+    {
+        var taskLabel = modelBuilder.Entity<TaskLabel>();
+
+        taskLabel.ToTable("task_labels");
+
+        taskLabel.HasKey(x => new { x.TaskId, x.LabelId });
+
+        taskLabel.Property(x => x.TaskId)
+            .IsRequired();
+
+        taskLabel.Property(x => x.LabelId)
+            .IsRequired();
     }
 }
