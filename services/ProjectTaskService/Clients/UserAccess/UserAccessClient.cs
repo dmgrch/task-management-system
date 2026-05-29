@@ -95,4 +95,12 @@ public class UserAccessClient : IUserAccessClient
             JsonOptions,
             cancellationToken);
     }
+    public async Task<bool> IsMemberAsync(Guid userId, Guid projectId, CancellationToken cancellationToken)
+    {
+        var response = await _httpClient.GetAsync($"/projects/{projectId}/members/{userId}/is-member", cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            return false;
+        var content = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
+        return content.TryGetProperty("isMember", out var isMember) && isMember.GetBoolean();
+    }
 }
