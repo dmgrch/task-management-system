@@ -1,5 +1,3 @@
-using System.Net.Http.Json;
-
 namespace UserAccessService.Clients.ProjectTask;
 
 public class ProjectTaskClient : IProjectTaskClient

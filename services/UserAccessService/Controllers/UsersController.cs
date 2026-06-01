@@ -12,7 +12,7 @@ public class UsersController : ControllerBase
 {
     private readonly UserAccessDbContext _dbContext;
 
-    public  UsersController(UserAccessDbContext dbContext)
+    public UsersController(UserAccessDbContext dbContext)
     {
         _dbContext = dbContext;
     }
