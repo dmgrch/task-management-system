@@ -153,7 +153,7 @@ public class TasksController : ControllerBase
         return Ok(ToResponse(task, labels));
     }
 
-    [HttpPut("{id:guid}")]
+    [HttpPatch("{id:guid}")]
     public async Task<IActionResult> UpdateTask(Guid id, UpdateTaskRequest request, [FromHeader(Name = "X-User-Id")] Guid actorUserId, CancellationToken cancellationToken)
     {
         if (actorUserId == Guid.Empty)
