@@ -108,6 +108,27 @@ paths:
                 type: array
                 items: { $ref: '#/components/schemas/TaskResponse' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /projects/{projectId}/tasks/statistics:
+    get:
+      summary: Получить статистику задач проекта
+      tags: [Tasks]
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdPath'
+        - $ref: '#/components/parameters/ActorUserIdHeader'
+      responses:
+        '200':
+          description: Статистика неудалённых задач проекта
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskStatisticsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '502':
+          description: Ошибка проверки доступа
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /tasks/{taskId}:
     get:
       summary: Получить задачу
@@ -391,6 +412,21 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/LabelResponse'
+    TaskStatisticsResponse:
+      type: object
+      required: [totalCount, byStatus]
+      properties:
+        totalCount: { type: integer, format: int32, minimum: 0 }
+        byStatus:
+          $ref: '#/components/schemas/TaskStatisticsByStatusResponse'
+    TaskStatisticsByStatusResponse:
+      type: object
+      required: [todo, inProgress, review, done]
+      properties:
+        todo: { type: integer, format: int32, minimum: 0 }
+        inProgress: { type: integer, format: int32, minimum: 0 }
+        review: { type: integer, format: int32, minimum: 0 }
+        done: { type: integer, format: int32, minimum: 0 }
     AddCommentRequest:
       type: object
       required: [text]

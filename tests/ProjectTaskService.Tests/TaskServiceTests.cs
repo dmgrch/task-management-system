@@ -108,6 +108,108 @@ public class TaskServiceTests
     }
 
     [Fact]
+    public async Task GetStatistics_EmptyProject_ReturnsAllStatusesWithZeroCounts()
+    {
+        using var db = NewDb();
+        db.Projects.Add(NewProject());
+        await db.SaveChangesAsync();
+
+        var result = await NewService(db)
+            .GetStatisticsAsync(ProjectId, OwnerId, CancellationToken.None);
+
+        Assert.Equal(0, result.TotalCount);
+        Assert.Equal(0, result.ByStatus.Todo);
+        Assert.Equal(0, result.ByStatus.InProgress);
+        Assert.Equal(0, result.ByStatus.Review);
+        Assert.Equal(0, result.ByStatus.Done);
+    }
+
+    [Fact]
+    public async Task GetStatistics_CountsStatusesForRequestedProjectOnly()
+    {
+        using var db = NewDb();
+        db.Projects.Add(NewProject());
+        db.Tasks.AddRange(
+            NewTask(TaskItemStatus.TODO),
+            NewTask(TaskItemStatus.TODO),
+            NewTask(TaskItemStatus.IN_PROGRESS),
+            NewTask(TaskItemStatus.REVIEW),
+            NewTask(TaskItemStatus.DONE),
+            NewTask(TaskItemStatus.DONE),
+            NewTask(TaskItemStatus.DONE),
+            NewTask(TaskItemStatus.TODO, projectId: Guid.NewGuid()));
+        await db.SaveChangesAsync();
+
+        var result = await NewService(db)
+            .GetStatisticsAsync(ProjectId, OwnerId, CancellationToken.None);
+
+        Assert.Equal(7, result.TotalCount);
+        Assert.Equal(2, result.ByStatus.Todo);
+        Assert.Equal(1, result.ByStatus.InProgress);
+        Assert.Equal(1, result.ByStatus.Review);
+        Assert.Equal(3, result.ByStatus.Done);
+    }
+
+    [Fact]
+    public async Task GetStatistics_ExcludesDeletedTasks()
+    {
+        using var db = NewDb();
+        db.Projects.Add(NewProject());
+        db.Tasks.AddRange(
+            NewTask(TaskItemStatus.TODO),
+            NewTask(TaskItemStatus.DONE, isDeleted: true));
+        await db.SaveChangesAsync();
+
+        var result = await NewService(db)
+            .GetStatisticsAsync(ProjectId, OwnerId, CancellationToken.None);
+
+        Assert.Equal(1, result.TotalCount);
+        Assert.Equal(1, result.ByStatus.Todo);
+        Assert.Equal(0, result.ByStatus.Done);
+    }
+
+    [Fact]
+    public async Task GetStatistics_RejectsMissingUser()
+    {
+        using var db = NewDb();
+        db.Projects.Add(NewProject());
+        await db.SaveChangesAsync();
+
+        var error = await Assert.ThrowsAsync<TaskOperationException>(() =>
+            NewService(db).GetStatisticsAsync(ProjectId, null, CancellationToken.None));
+
+        Assert.Equal(TaskErrorKind.Unauthorized, error.Kind);
+        Assert.Equal("USER_ID_REQUIRED", error.Code);
+    }
+
+    [Fact]
+    public async Task GetStatistics_RejectsForbiddenAccess()
+    {
+        using var db = NewDb();
+        db.Projects.Add(NewProject());
+        await db.SaveChangesAsync();
+
+        var error = await Assert.ThrowsAsync<TaskOperationException>(() =>
+            NewService(db, allowed: false)
+                .GetStatisticsAsync(ProjectId, OwnerId, CancellationToken.None));
+
+        Assert.Equal(TaskErrorKind.Forbidden, error.Kind);
+        Assert.Equal("ACCESS_DENIED", error.Code);
+    }
+
+    [Fact]
+    public async Task GetStatistics_ReturnsProjectNotFound()
+    {
+        using var db = NewDb();
+
+        var error = await Assert.ThrowsAsync<TaskOperationException>(() =>
+            NewService(db).GetStatisticsAsync(ProjectId, OwnerId, CancellationToken.None));
+
+        Assert.Equal(TaskErrorKind.NotFound, error.Kind);
+        Assert.Equal("PROJECT_NOT_FOUND", error.Code);
+    }
+
+    [Fact]
     public async Task ChangeStatus_RejectsInvalidTransition()
     {
         using var db = NewDb();
@@ -208,10 +310,13 @@ public class TaskServiceTests
         CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
     };
 
-    private static TaskItem NewTask() => new()
+    private static TaskItem NewTask(
+        TaskItemStatus status = TaskItemStatus.TODO,
+        bool isDeleted = false,
+        Guid? projectId = null) => new()
     {
-        Id = Guid.NewGuid(), ProjectId = ProjectId, Title = "Task",
-        CreatedByUserId = OwnerId, Status = TaskItemStatus.TODO,
+        Id = Guid.NewGuid(), ProjectId = projectId ?? ProjectId, Title = "Task",
+        CreatedByUserId = OwnerId, Status = status, IsDeleted = isDeleted,
         CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
     };
 

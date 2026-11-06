@@ -55,6 +55,28 @@ public class TaskService : ITaskService
         return ToResponse(task, labels);
     }
 
+    public async Task<TaskStatisticsResponse> GetStatisticsAsync(
+        Guid projectId, Guid? actorUserId, CancellationToken ct)
+    {
+        await GetProjectAsync(projectId, ct);
+        await CheckAccessAsync(actorUserId, projectId, ProjectAction.ViewTask, ct);
+
+        var counts = await _tasks.GetTaskCountsByStatusAsync(projectId, ct);
+        var byStatus = new TaskStatisticsByStatusResponse
+        {
+            Todo = counts.GetValueOrDefault(TaskItemStatus.TODO),
+            InProgress = counts.GetValueOrDefault(TaskItemStatus.IN_PROGRESS),
+            Review = counts.GetValueOrDefault(TaskItemStatus.REVIEW),
+            Done = counts.GetValueOrDefault(TaskItemStatus.DONE)
+        };
+
+        return new TaskStatisticsResponse
+        {
+            TotalCount = byStatus.Todo + byStatus.InProgress + byStatus.Review + byStatus.Done,
+            ByStatus = byStatus
+        };
+    }
+
     public async Task UpdateAsync(Guid id, UpdateTaskRequest request, Guid actorUserId, CancellationToken ct)
     {
         RequireUser(actorUserId, "X-User-Id is required");
