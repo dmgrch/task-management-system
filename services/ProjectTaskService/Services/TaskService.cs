@@ -158,19 +158,44 @@ public class TaskService : ITaskService
             Fail(TaskErrorKind.Validation, "ASSIGNEE_NOT_MEMBER", "Assignee is not a member of this project");
     }
 
-    private async Task CheckAccessAsync(Guid? actor, Guid projectId, ProjectAction action,
-        CancellationToken ct, bool allowCreatorOverride = false)
+    private async Task CheckAccessAsync(
+        Guid? actor,
+        Guid projectId,
+        ProjectAction action,
+        CancellationToken ct,
+        bool allowCreatorOverride = false)
     {
-        if (actor is null || actor == Guid.Empty)
-            Fail(TaskErrorKind.Unauthorized, "USER_ID_REQUIRED", "X-User-Id header is required");
-        var access = await _access.CheckAccessAsync(actor.Value, projectId, action, ct);
-        if (allowCreatorOverride) return; // preserves the original creator exception for edit/delete
+        var userId = actor.GetValueOrDefault();
+
+        if (userId == Guid.Empty)
+        {
+            Fail(
+                TaskErrorKind.Unauthorized,
+                "USER_ID_REQUIRED",
+                "X-User-Id header is required");
+        }
+
+        var access = await _access.CheckAccessAsync(
+            userId, projectId, action, ct);
+
+        if (allowCreatorOverride)
+            return;
+
         if (access is null)
-            Fail(TaskErrorKind.DependencyUnavailable, "USER_ACCESS_SERVICE_ERROR",
+        {
+            Fail(
+                TaskErrorKind.DependencyUnavailable,
+                "USER_ACCESS_SERVICE_ERROR",
                 "Could not check access in UserAccessService");
+        }
+
         if (!access!.Allowed)
-            Fail(TaskErrorKind.Forbidden, "ACCESS_DENIED",
+        {
+            Fail(
+                TaskErrorKind.Forbidden,
+                "ACCESS_DENIED",
                 "User does not have permission to perform this action");
+        }
     }
 
     private static string NormalizeTitle(string? title)
