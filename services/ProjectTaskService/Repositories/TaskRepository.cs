@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using ProjectTaskService.Data;
 using ProjectTaskService.Dtos;
 using ProjectTaskService.Entities;
+using ProjectTaskService.Enums;
 
 namespace ProjectTaskService.Repositories;
 
@@ -16,6 +17,35 @@ public class TaskRepository : ITaskRepository
 
     public Task<TaskItem?> GetTaskAsync(Guid taskId, CancellationToken ct) =>
         _db.Tasks.FirstOrDefaultAsync(t => t.Id == taskId && !t.IsDeleted, ct);
+
+    public async Task<(List<TaskItem> Items, int TotalCount)> GetProjectTasksAsync(
+        Guid projectId,
+        int page,
+        int limit,
+        TaskItemStatus? status,
+        CancellationToken ct)
+    {
+        var query = _db.Tasks
+            .AsNoTracking()
+            .Where(task => task.ProjectId == projectId && !task.IsDeleted);
+
+        if (status.HasValue)
+            query = query.Where(task => task.Status == status.Value);
+
+        var totalCount = await query.CountAsync(ct);
+        var skip = ((long)page - 1) * limit;
+        if (skip > int.MaxValue)
+            return (new List<TaskItem>(), totalCount);
+
+        var items = await query
+            .OrderBy(task => task.CreatedAt)
+            .ThenBy(task => task.Id)
+            .Skip((int)skip)
+            .Take(limit)
+            .ToListAsync(ct);
+
+        return (items, totalCount);
+    }
 
     public Task<List<LabelResponse>> GetActiveLabelsAsync(Guid taskId, CancellationToken ct) =>
         _db.TaskLabels

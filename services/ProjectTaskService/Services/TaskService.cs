@@ -55,6 +55,26 @@ public class TaskService : ITaskService
         return ToResponse(task, labels);
     }
 
+    public async Task<PagedTaskResponse> GetProjectTasksAsync(
+        Guid projectId,
+        int page,
+        int limit,
+        TaskItemStatus? status,
+        CancellationToken ct)
+    {
+        var (items, totalCount) = await _tasks.GetProjectTasksAsync(
+            projectId, page, limit, status, ct);
+
+        return new PagedTaskResponse
+        {
+            Items = items.Select(task => ToResponse(task)).ToList(),
+            Page = page,
+            Limit = limit,
+            TotalCount = totalCount,
+            TotalPages = totalCount == 0 ? 0 : (int)Math.Ceiling((double)totalCount / limit)
+        };
+    }
+
     public async Task UpdateAsync(Guid id, UpdateTaskRequest request, Guid actorUserId, CancellationToken ct)
     {
         RequireUser(actorUserId, "X-User-Id is required");

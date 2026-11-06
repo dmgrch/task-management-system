@@ -108,6 +108,86 @@ public class TaskServiceTests
     }
 
     [Fact]
+    public async Task GetProjectTasks_ReturnsRequestedPageInStableOrder()
+    {
+        using var db = NewDb();
+        var createdAt = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        db.Tasks.AddRange(
+            NewTask(Guid.Parse("00000000-0000-0000-0000-000000000004"), createdAt.AddMinutes(1)),
+            NewTask(Guid.Parse("00000000-0000-0000-0000-000000000003"), createdAt),
+            NewTask(Guid.Parse("00000000-0000-0000-0000-000000000001"), createdAt),
+            NewTask(Guid.Parse("00000000-0000-0000-0000-000000000002"), createdAt));
+        await db.SaveChangesAsync();
+
+        var result = await NewService(db).GetProjectTasksAsync(
+            ProjectId, page: 2, limit: 2, status: null, ct: CancellationToken.None);
+
+        Assert.Equal(2, result.Page);
+        Assert.Equal(2, result.Limit);
+        Assert.Equal(4, result.TotalCount);
+        Assert.Equal(2, result.TotalPages);
+        Assert.Equal(
+            new[]
+            {
+                Guid.Parse("00000000-0000-0000-0000-000000000003"),
+                Guid.Parse("00000000-0000-0000-0000-000000000004")
+            },
+            result.Items.Select(task => task.Id));
+    }
+
+    [Fact]
+    public async Task GetProjectTasks_FiltersBeforeCountingAndExcludesDeletedTasks()
+    {
+        using var db = NewDb();
+        var todo = NewTask();
+        var done = NewTask();
+        done.Status = TaskItemStatus.DONE;
+        var deletedDone = NewTask();
+        deletedDone.Status = TaskItemStatus.DONE;
+        deletedDone.IsDeleted = true;
+        var otherProjectDone = NewTask();
+        otherProjectDone.ProjectId = Guid.NewGuid();
+        otherProjectDone.Status = TaskItemStatus.DONE;
+        db.Tasks.AddRange(todo, done, deletedDone, otherProjectDone);
+        await db.SaveChangesAsync();
+
+        var result = await NewService(db).GetProjectTasksAsync(
+            ProjectId, page: 1, limit: 20, status: TaskItemStatus.DONE, ct: CancellationToken.None);
+
+        Assert.Equal(1, result.TotalCount);
+        Assert.Equal(1, result.TotalPages);
+        Assert.Collection(result.Items, item => Assert.Equal(done.Id, item.Id));
+    }
+
+    [Fact]
+    public async Task GetProjectTasks_EmptyResultHasZeroTotalPages()
+    {
+        using var db = NewDb();
+
+        var result = await NewService(db).GetProjectTasksAsync(
+            ProjectId, page: 1, limit: 100, status: null, ct: CancellationToken.None);
+
+        Assert.Empty(result.Items);
+        Assert.Equal(0, result.TotalCount);
+        Assert.Equal(0, result.TotalPages);
+    }
+
+    [Fact]
+    public async Task GetProjectTasks_VeryLargePageReturnsEmptyItemsWithoutOverflow()
+    {
+        using var db = NewDb();
+        db.Tasks.Add(NewTask());
+        await db.SaveChangesAsync();
+
+        var result = await NewService(db).GetProjectTasksAsync(
+            ProjectId, page: int.MaxValue, limit: 100, status: null, ct: CancellationToken.None);
+
+        Assert.Empty(result.Items);
+        Assert.Equal(1, result.TotalCount);
+        Assert.Equal(1, result.TotalPages);
+    }
+
+    [Fact]
     public async Task ChangeStatus_RejectsInvalidTransition()
     {
         using var db = NewDb();
@@ -214,6 +294,15 @@ public class TaskServiceTests
         CreatedByUserId = OwnerId, Status = TaskItemStatus.TODO,
         CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
     };
+
+    private static TaskItem NewTask(Guid id, DateTime createdAt)
+    {
+        var task = NewTask();
+        task.Id = id;
+        task.CreatedAt = createdAt;
+        task.UpdatedAt = createdAt;
+        return task;
+    }
 
     private static TaskService NewService(ProjectTaskDbContext db, bool allowed = true, bool isMember = true) =>
         new(new TaskRepository(db), new StubUserAccessClient { Allowed = allowed, IsMember = isMember });
