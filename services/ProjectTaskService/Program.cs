@@ -2,6 +2,8 @@ using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using ProjectTaskService.Clients.UserAccess;
 using ProjectTaskService.Data;
+using ProjectTaskService.Repositories;
+using ProjectTaskService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -25,6 +27,9 @@ builder.Services.AddHttpClient<IUserAccessClient, UserAccessClient>(client =>
 
     client.BaseAddress = new Uri(baseUrl);
 });
+
+builder.Services.AddScoped<ITaskRepository, TaskRepository>();
+builder.Services.AddScoped<ITaskService, TaskService>();
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
