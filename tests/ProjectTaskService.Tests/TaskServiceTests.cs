@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Mvc;
 using ProjectTaskService.Clients.UserAccess;
+using ProjectTaskService.Controllers;
 using ProjectTaskService.Data;
 using ProjectTaskService.Dtos;
 using ProjectTaskService.Entities;
@@ -108,6 +110,126 @@ public class TaskServiceTests
     }
 
     [Fact]
+    public async Task GetByProject_FiltersPaginatesOrdersAndExcludesDeletedTasks()
+    {
+        using var db = NewDb();
+        db.Projects.Add(NewProject());
+        var firstId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+        var secondId = Guid.Parse("00000000-0000-0000-0000-000000000002");
+        var thirdId = Guid.Parse("00000000-0000-0000-0000-000000000003");
+        var createdAt = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+        db.Tasks.AddRange(
+            NewTask(firstId, TaskItemStatus.TODO, createdAt),
+            NewTask(secondId, TaskItemStatus.TODO, createdAt),
+            NewTask(thirdId, TaskItemStatus.TODO, createdAt.AddMinutes(1)),
+            NewTask(Guid.NewGuid(), TaskItemStatus.DONE, createdAt.AddMinutes(-1)),
+            NewTask(Guid.NewGuid(), TaskItemStatus.TODO, createdAt.AddMinutes(-2), isDeleted: true));
+        await db.SaveChangesAsync();
+
+        var service = NewService(db);
+        var firstPage = await service.GetByProjectAsync(
+            ProjectId, OwnerId, page: 1, limit: 2, TaskItemStatus.TODO, CancellationToken.None);
+        var result = await service.GetByProjectAsync(
+            ProjectId, OwnerId, page: 2, limit: 2, TaskItemStatus.TODO, CancellationToken.None);
+
+        Assert.Collection(
+            firstPage.Items,
+            item => Assert.Equal(firstId, item.Id),
+            item => Assert.Equal(secondId, item.Id));
+        Assert.Equal(3, result.TotalCount);
+        Assert.Equal(2, result.TotalPages);
+        Assert.Equal(2, result.Page);
+        Assert.Equal(2, result.Limit);
+        Assert.Collection(result.Items, item => Assert.Equal(thirdId, item.Id));
+    }
+
+    [Fact]
+    public async Task GetByProject_PageBeyondResults_ReturnsEmptyItemsWithFilteredCount()
+    {
+        using var db = NewDb();
+        db.Projects.Add(NewProject());
+        db.Tasks.Add(NewTask());
+        await db.SaveChangesAsync();
+
+        var result = await NewService(db).GetByProjectAsync(
+            ProjectId, OwnerId, page: int.MaxValue, limit: 100, status: null, CancellationToken.None);
+
+        Assert.Empty(result.Items);
+        Assert.Equal(1, result.TotalCount);
+        Assert.Equal(1, result.TotalPages);
+    }
+
+    [Fact]
+    public async Task GetByProject_RejectsForbiddenAccess()
+    {
+        using var db = NewDb();
+        db.Projects.Add(NewProject());
+        await db.SaveChangesAsync();
+
+        var error = await Assert.ThrowsAsync<TaskOperationException>(() =>
+            NewService(db, allowed: false).GetByProjectAsync(
+                ProjectId, OwnerId, 1, 20, null, CancellationToken.None));
+
+        Assert.Equal("ACCESS_DENIED", error.Code);
+    }
+
+    [Fact]
+    public async Task GetByProject_MissingProject_ReturnsNotFoundBeforeAccessCheck()
+    {
+        using var db = NewDb();
+
+        var error = await Assert.ThrowsAsync<TaskOperationException>(() =>
+            NewService(db, allowed: false).GetByProjectAsync(
+                ProjectId, OwnerId, 1, 20, null, CancellationToken.None));
+
+        Assert.Equal("PROJECT_NOT_FOUND", error.Code);
+        Assert.Equal(TaskErrorKind.NotFound, error.Kind);
+    }
+
+    [Fact]
+    public async Task GetTasksByProject_UsesPaginationDefaults()
+    {
+        using var db = NewDb();
+        db.Projects.Add(NewProject());
+        await db.SaveChangesAsync();
+        var access = new StubUserAccessClient { Allowed = true, IsMember = true };
+        var controller = new ProjectsController(db, access, new TaskService(new TaskRepository(db), access));
+
+        var action = await controller.GetTasksByProject(
+            ProjectId, OwnerId, page: null, limit: null, status: null, CancellationToken.None);
+
+        var response = Assert.IsType<PagedTaskResponse>(Assert.IsType<OkObjectResult>(action).Value);
+        Assert.Equal(1, response.Page);
+        Assert.Equal(20, response.Limit);
+        Assert.Equal(0, response.TotalCount);
+        Assert.Equal(0, response.TotalPages);
+    }
+
+    [Theory]
+    [InlineData("0", null, null)]
+    [InlineData("abc", null, null)]
+    [InlineData(null, "0", null)]
+    [InlineData(null, "101", null)]
+    [InlineData(null, "abc", null)]
+    [InlineData(null, null, "UNKNOWN")]
+    [InlineData(null, null, "1")]
+    public async Task GetTasksByProject_InvalidQuery_ReturnsStructuredValidationError(
+        string? page,
+        string? limit,
+        string? status)
+    {
+        using var db = NewDb();
+        var access = new StubUserAccessClient { Allowed = true, IsMember = true };
+        var controller = new ProjectsController(db, access, new TaskService(new TaskRepository(db), access));
+
+        var action = await controller.GetTasksByProject(
+            ProjectId, OwnerId, page, limit, status, CancellationToken.None);
+
+        var response = Assert.IsType<ErrorResponse>(Assert.IsType<BadRequestObjectResult>(action).Value);
+        Assert.Equal("VALIDATION_ERROR", response.Code);
+    }
+
+    [Fact]
     public async Task ChangeStatus_RejectsInvalidTransition()
     {
         using var db = NewDb();
@@ -213,6 +335,22 @@ public class TaskServiceTests
         Id = Guid.NewGuid(), ProjectId = ProjectId, Title = "Task",
         CreatedByUserId = OwnerId, Status = TaskItemStatus.TODO,
         CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
+    };
+
+    private static TaskItem NewTask(
+        Guid id,
+        TaskItemStatus status,
+        DateTime createdAt,
+        bool isDeleted = false) => new()
+    {
+        Id = id,
+        ProjectId = ProjectId,
+        Title = "Task",
+        CreatedByUserId = OwnerId,
+        Status = status,
+        CreatedAt = createdAt,
+        UpdatedAt = createdAt,
+        IsDeleted = isDeleted
     };
 
     private static TaskService NewService(ProjectTaskDbContext db, bool allowed = true, bool isMember = true) =>

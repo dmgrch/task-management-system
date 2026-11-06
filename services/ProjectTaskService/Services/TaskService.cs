@@ -55,6 +55,36 @@ public class TaskService : ITaskService
         return ToResponse(task, labels);
     }
 
+    public async Task<PagedTaskResponse> GetByProjectAsync(
+        Guid projectId,
+        Guid? actorUserId,
+        int page,
+        int limit,
+        TaskItemStatus? status,
+        CancellationToken ct)
+    {
+        if (page < 1)
+            Fail(TaskErrorKind.Validation, "VALIDATION_ERROR", "Page must be greater than or equal to 1");
+        if (limit is < 1 or > 100)
+            Fail(TaskErrorKind.Validation, "VALIDATION_ERROR", "Limit must be between 1 and 100");
+        if (status.HasValue && !Enum.IsDefined(status.Value))
+            Fail(TaskErrorKind.Validation, "VALIDATION_ERROR", "Status is invalid");
+
+        await GetProjectAsync(projectId, ct);
+        await CheckAccessAsync(actorUserId, projectId, ProjectAction.ViewTask, ct);
+
+        var (items, totalCount) = await _tasks.GetTasksPageAsync(projectId, page, limit, status, ct);
+
+        return new PagedTaskResponse
+        {
+            Items = items.Select(task => ToResponse(task)).ToList(),
+            Page = page,
+            Limit = limit,
+            TotalCount = totalCount,
+            TotalPages = (int)Math.Ceiling(totalCount / (double)limit)
+        };
+    }
+
     public async Task UpdateAsync(Guid id, UpdateTaskRequest request, Guid actorUserId, CancellationToken ct)
     {
         RequireUser(actorUserId, "X-User-Id is required");
