@@ -360,10 +360,37 @@ public class ProjectsController : ControllerBase
 
     [HttpGet("{projectId:guid}/tasks")]
     public async Task<IActionResult> GetTasksByProject(
-    Guid projectId,
-    [FromHeader(Name = "X-User-Id")] Guid? actorUserId,
-    CancellationToken cancellationToken)
+        Guid projectId,
+        [FromHeader(Name = "X-User-Id")] Guid? actorUserId,
+        [FromQuery] string? page,
+        [FromQuery] string? limit,
+        [FromQuery] string? status,
+        CancellationToken cancellationToken)
     {
+        if (!TryParsePositiveInt(page, 1, out var parsedPage))
+        {
+            return ValidationError("Page must be an integer greater than or equal to 1");
+        }
+
+        if (!TryParsePositiveInt(limit, 20, out var parsedLimit) || parsedLimit > 100)
+        {
+            return ValidationError("Limit must be an integer between 1 and 100");
+        }
+
+        TaskItemStatus? parsedStatus = null;
+        if (status is not null)
+        {
+            var matchingStatus = Enum.GetNames<TaskItemStatus>()
+                .FirstOrDefault(name => string.Equals(name, status, StringComparison.OrdinalIgnoreCase));
+
+            if (matchingStatus is null)
+            {
+                return ValidationError("Status must be a valid task status");
+            }
+
+            parsedStatus = Enum.Parse<TaskItemStatus>(matchingStatus);
+        }
+
         var project = await _dbContext.Projects
             .FirstOrDefaultAsync(p => p.Id == projectId, cancellationToken);
         if (project == null)
@@ -377,9 +404,24 @@ public class ProjectsController : ControllerBase
         if (accessError != null)
             return accessError;
 
-        var tasks = await _dbContext.Tasks
-            .Where(t => t.ProjectId == projectId && !t.IsDeleted)
+        var query = _dbContext.Tasks
+            .Where(t => t.ProjectId == projectId && !t.IsDeleted);
+
+        if (parsedStatus.HasValue)
+        {
+            query = query.Where(t => t.Status == parsedStatus.Value);
+        }
+
+        var totalCount = await query.CountAsync(cancellationToken);
+        var offset = ((long)parsedPage - 1) * parsedLimit;
+
+        var tasks = offset >= totalCount
+            ? new List<TaskResponse>()
+            : await query
             .OrderBy(t => t.CreatedAt)
+            .ThenBy(t => t.Id)
+            .Skip((int)offset)
+            .Take(parsedLimit)
             .Select(t => new TaskResponse
             {
                 Id = t.Id,
@@ -394,7 +436,32 @@ public class ProjectsController : ControllerBase
             })
             .ToListAsync(cancellationToken);
 
-        return Ok(tasks);
+        return Ok(new PagedTasksResponse
+        {
+            Items = tasks,
+            Page = parsedPage,
+            Limit = parsedLimit,
+            TotalCount = totalCount,
+            TotalPages = (int)Math.Ceiling(totalCount / (double)parsedLimit)
+        });
+    }
+
+    private BadRequestObjectResult ValidationError(string message) =>
+        BadRequest(new ErrorResponse
+        {
+            Code = "VALIDATION_ERROR",
+            Message = message
+        });
+
+    private static bool TryParsePositiveInt(string? value, int defaultValue, out int result)
+    {
+        if (value is null)
+        {
+            result = defaultValue;
+            return true;
+        }
+
+        return int.TryParse(value, out result) && result >= 1;
     }
 
     private async Task<IActionResult?> ValidateAccessAsync(

@@ -99,14 +99,26 @@ paths:
       parameters:
         - $ref: '#/components/parameters/ProjectIdPath'
         - $ref: '#/components/parameters/ActorUserIdHeader'
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/TaskStatus' }
       responses:
         '200':
           description: Список задач проекта
           content:
             application/json:
-              schema:
-                type: array
-                items: { $ref: '#/components/schemas/TaskResponse' }
+              schema: { $ref: '#/components/schemas/PagedTasksResponse' }
+        '400':
+          description: Некорректные параметры пагинации или фильтрации
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /tasks/{taskId}:
     get:
@@ -391,6 +403,17 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/LabelResponse'
+    PagedTasksResponse:
+      type: object
+      required: [items, page, limit, totalCount, totalPages]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/TaskResponse' }
+        page: { type: integer, minimum: 1 }
+        limit: { type: integer, minimum: 1, maximum: 100 }
+        totalCount: { type: integer, minimum: 0 }
+        totalPages: { type: integer, minimum: 0 }
     AddCommentRequest:
       type: object
       required: [text]
