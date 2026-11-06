@@ -6,6 +6,7 @@ using ProjectTaskService.Data;
 using ProjectTaskService.Dtos;
 using ProjectTaskService.Entities;
 using ProjectTaskService.Enums;
+using ProjectTaskService.Services;
 
 namespace ProjectTaskService.Controllers;
 
@@ -15,13 +16,16 @@ public class ProjectsController : ControllerBase
 {
     private readonly ProjectTaskDbContext _dbContext;
     private readonly IUserAccessClient _userAccessClient;
+    private readonly ITaskService _taskService;
 
     public ProjectsController(
         ProjectTaskDbContext dbContext,
-        IUserAccessClient userAccessClient)
+        IUserAccessClient userAccessClient,
+        ITaskService taskService)
     {
         _dbContext = dbContext;
         _userAccessClient = userAccessClient;
+        _taskService = taskService;
     }
 
     [HttpPost]
@@ -360,41 +364,73 @@ public class ProjectsController : ControllerBase
 
     [HttpGet("{projectId:guid}/tasks")]
     public async Task<IActionResult> GetTasksByProject(
-    Guid projectId,
-    [FromHeader(Name = "X-User-Id")] Guid? actorUserId,
-    CancellationToken cancellationToken)
+        Guid projectId,
+        [FromHeader(Name = "X-User-Id")] Guid? actorUserId,
+        [FromQuery] string? page,
+        [FromQuery] string? limit,
+        [FromQuery] string? status,
+        CancellationToken cancellationToken)
     {
-        var project = await _dbContext.Projects
-            .FirstOrDefaultAsync(p => p.Id == projectId, cancellationToken);
-        if (project == null)
-            return NotFound(new ErrorResponse
+        if (!TryParsePositiveInt(page, 1, out var parsedPage) || parsedPage < 1)
+            return ValidationError("Page must be an integer greater than or equal to 1");
+
+        if (!TryParsePositiveInt(limit, 20, out var parsedLimit) || parsedLimit is < 1 or > 100)
+            return ValidationError("Limit must be an integer between 1 and 100");
+
+        TaskItemStatus? parsedStatus = null;
+        if (status is not null)
+        {
+            var isNamedStatus = Enum.GetNames<TaskItemStatus>()
+                .Contains(status, StringComparer.OrdinalIgnoreCase);
+            if (!isNamedStatus || !Enum.TryParse(status, true, out TaskItemStatus value))
+                return ValidationError("Status must be one of: TODO, IN_PROGRESS, REVIEW, DONE");
+            parsedStatus = value;
+        }
+
+        return await ExecuteTaskOperationAsync(async () =>
+            Ok(await _taskService.ListByProjectAsync(
+                projectId,
+                actorUserId,
+                parsedPage,
+                parsedLimit,
+                parsedStatus,
+                cancellationToken)));
+    }
+
+    private static bool TryParsePositiveInt(string? value, int defaultValue, out int result)
+    {
+        if (value is null)
+        {
+            result = defaultValue;
+            return true;
+        }
+
+        return int.TryParse(value, out result);
+    }
+
+    private BadRequestObjectResult ValidationError(string message) =>
+        BadRequest(new ErrorResponse { Code = "VALIDATION_ERROR", Message = message });
+
+    private async Task<IActionResult> ExecuteTaskOperationAsync(Func<Task<IActionResult>> action)
+    {
+        try
+        {
+            return await action();
+        }
+        catch (TaskOperationException ex)
+        {
+            var statusCode = ex.Kind switch
             {
-                Code = "PROJECT_NOT_FOUND",
-                Message = "Project not found"
-            });
-
-        var accessError = await ValidateAccessAsync(actorUserId, projectId, ProjectAction.ViewTask, cancellationToken);
-        if (accessError != null)
-            return accessError;
-
-        var tasks = await _dbContext.Tasks
-            .Where(t => t.ProjectId == projectId && !t.IsDeleted)
-            .OrderBy(t => t.CreatedAt)
-            .Select(t => new TaskResponse
-            {
-                Id = t.Id,
-                ProjectId = t.ProjectId,
-                Title = t.Title,
-                Description = t.Description,
-                Status = t.Status,
-                AssigneeUserId = t.AssigneeUserId,
-                CreatedByUserId = t.CreatedByUserId,
-                CreatedAt = t.CreatedAt,
-                UpdatedAt = t.UpdatedAt
-            })
-            .ToListAsync(cancellationToken);
-
-        return Ok(tasks);
+                TaskErrorKind.Validation => StatusCodes.Status400BadRequest,
+                TaskErrorKind.Unauthorized => StatusCodes.Status401Unauthorized,
+                TaskErrorKind.Forbidden => StatusCodes.Status403Forbidden,
+                TaskErrorKind.NotFound => StatusCodes.Status404NotFound,
+                TaskErrorKind.Conflict => StatusCodes.Status409Conflict,
+                TaskErrorKind.DependencyUnavailable => StatusCodes.Status502BadGateway,
+                _ => StatusCodes.Status500InternalServerError
+            };
+            return StatusCode(statusCode, new ErrorResponse { Code = ex.Code, Message = ex.Message });
+        }
     }
 
     private async Task<IActionResult?> ValidateAccessAsync(
