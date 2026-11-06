@@ -360,10 +360,22 @@ public class ProjectsController : ControllerBase
 
     [HttpGet("{projectId:guid}/tasks")]
     public async Task<IActionResult> GetTasksByProject(
-    Guid projectId,
-    [FromHeader(Name = "X-User-Id")] Guid? actorUserId,
-    CancellationToken cancellationToken)
+        Guid projectId,
+        [FromHeader(Name = "X-User-Id")] Guid? actorUserId,
+        [FromQuery] string? page,
+        [FromQuery] string? limit,
+        [FromQuery] string? status,
+        CancellationToken cancellationToken)
     {
+        if (!TryParseQuery(page, limit, status, out var pageNumber, out var pageSize, out var taskStatus))
+        {
+            return BadRequest(new ErrorResponse
+            {
+                Code = "VALIDATION_ERROR",
+                Message = "Invalid pagination or status query parameter"
+            });
+        }
+
         var project = await _dbContext.Projects
             .FirstOrDefaultAsync(p => p.Id == projectId, cancellationToken);
         if (project == null)
@@ -377,24 +389,76 @@ public class ProjectsController : ControllerBase
         if (accessError != null)
             return accessError;
 
-        var tasks = await _dbContext.Tasks
-            .Where(t => t.ProjectId == projectId && !t.IsDeleted)
-            .OrderBy(t => t.CreatedAt)
-            .Select(t => new TaskResponse
-            {
-                Id = t.Id,
-                ProjectId = t.ProjectId,
-                Title = t.Title,
-                Description = t.Description,
-                Status = t.Status,
-                AssigneeUserId = t.AssigneeUserId,
-                CreatedByUserId = t.CreatedByUserId,
-                CreatedAt = t.CreatedAt,
-                UpdatedAt = t.UpdatedAt
-            })
-            .ToListAsync(cancellationToken);
+        var query = _dbContext.Tasks
+            .AsNoTracking()
+            .Where(t => t.ProjectId == projectId && !t.IsDeleted);
 
-        return Ok(tasks);
+        if (taskStatus.HasValue)
+            query = query.Where(t => t.Status == taskStatus.Value);
+
+        var totalCount = await query.CountAsync(cancellationToken);
+        var offset = ((long)pageNumber - 1) * pageSize;
+
+        var tasks = offset >= totalCount
+            ? new List<TaskResponse>()
+            : await query
+                .OrderBy(t => t.CreatedAt)
+                .ThenBy(t => t.Id)
+                .Skip((int)offset)
+                .Take(pageSize)
+                .Select(t => new TaskResponse
+                {
+                    Id = t.Id,
+                    ProjectId = t.ProjectId,
+                    Title = t.Title,
+                    Description = t.Description,
+                    Status = t.Status,
+                    AssigneeUserId = t.AssigneeUserId,
+                    CreatedByUserId = t.CreatedByUserId,
+                    CreatedAt = t.CreatedAt,
+                    UpdatedAt = t.UpdatedAt
+                })
+                .ToListAsync(cancellationToken);
+
+        return Ok(new PagedTaskResponse
+        {
+            Items = tasks,
+            Page = pageNumber,
+            Limit = pageSize,
+            TotalCount = totalCount,
+            TotalPages = (int)Math.Ceiling(totalCount / (double)pageSize)
+        });
+    }
+
+    private static bool TryParseQuery(
+        string? page,
+        string? limit,
+        string? status,
+        out int pageNumber,
+        out int pageSize,
+        out TaskItemStatus? taskStatus)
+    {
+        pageNumber = 1;
+        pageSize = 20;
+        taskStatus = null;
+
+        if (page is not null && (!int.TryParse(page, out pageNumber) || pageNumber < 1))
+            return false;
+
+        if (limit is not null &&
+            (!int.TryParse(limit, out pageSize) || pageSize is < 1 or > 100))
+            return false;
+
+        if (status is not null)
+        {
+            if (!Enum.GetNames<TaskItemStatus>().Contains(status, StringComparer.OrdinalIgnoreCase) ||
+                !Enum.TryParse<TaskItemStatus>(status, true, out var parsedStatus))
+                return false;
+
+            taskStatus = parsedStatus;
+        }
+
+        return true;
     }
 
     private async Task<IActionResult?> ValidateAccessAsync(
