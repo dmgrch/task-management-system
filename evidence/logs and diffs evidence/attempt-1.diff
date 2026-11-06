@@ -1,0 +1,342 @@
+diff --git a/services/ProjectTaskService/Controllers/ProjectsController.cs b/services/ProjectTaskService/Controllers/ProjectsController.cs
+index f74a82a..0ef970e 100644
+--- a/services/ProjectTaskService/Controllers/ProjectsController.cs
++++ b/services/ProjectTaskService/Controllers/ProjectsController.cs
+@@ -360,10 +360,38 @@ public class ProjectsController : ControllerBase
+ 
+     [HttpGet("{projectId:guid}/tasks")]
+     public async Task<IActionResult> GetTasksByProject(
+-    Guid projectId,
+-    [FromHeader(Name = "X-User-Id")] Guid? actorUserId,
+-    CancellationToken cancellationToken)
++        Guid projectId,
++        [FromHeader(Name = "X-User-Id")] Guid? actorUserId,
++        CancellationToken cancellationToken,
++        [FromQuery] string? page = null,
++        [FromQuery] string? limit = null,
++        [FromQuery] string? status = null)
+     {
++        if (!TryParsePositiveInt(page, 1, out var pageNumber))
++        {
++            return ValidationError("Page must be an integer greater than or equal to 1");
++        }
++
++        if (!TryParsePositiveInt(limit, 20, out var pageLimit) || pageLimit > 100)
++        {
++            return ValidationError("Limit must be an integer between 1 and 100");
++        }
++
++        TaskItemStatus? statusFilter = null;
++        if (status is not null)
++        {
++            if (!Enum.TryParse<TaskItemStatus>(status, true, out var parsedStatus)
++                || !string.Equals(
++                    Enum.GetName(parsedStatus),
++                    status,
++                    StringComparison.OrdinalIgnoreCase))
++            {
++                return ValidationError("Status must be a valid task status");
++            }
++
++            statusFilter = parsedStatus;
++        }
++
+         var project = await _dbContext.Projects
+             .FirstOrDefaultAsync(p => p.Id == projectId, cancellationToken);
+         if (project == null)
+@@ -377,9 +405,24 @@ public class ProjectsController : ControllerBase
+         if (accessError != null)
+             return accessError;
+ 
+-        var tasks = await _dbContext.Tasks
+-            .Where(t => t.ProjectId == projectId && !t.IsDeleted)
++        var query = _dbContext.Tasks
++            .Where(t => t.ProjectId == projectId && !t.IsDeleted);
++
++        if (statusFilter.HasValue)
++        {
++            query = query.Where(t => t.Status == statusFilter.Value);
++        }
++
++        var totalCount = await query.CountAsync(cancellationToken);
++        var offset = (long)(pageNumber - 1) * pageLimit;
++
++        var tasks = offset >= totalCount
++            ? new List<TaskResponse>()
++            : await query
+             .OrderBy(t => t.CreatedAt)
++            .ThenBy(t => t.Id)
++            .Skip((int)offset)
++            .Take(pageLimit)
+             .Select(t => new TaskResponse
+             {
+                 Id = t.Id,
+@@ -394,7 +437,36 @@ public class ProjectsController : ControllerBase
+             })
+             .ToListAsync(cancellationToken);
+ 
+-        return Ok(tasks);
++        return Ok(new PagedTaskResponse
++        {
++            Items = tasks,
++            Page = pageNumber,
++            Limit = pageLimit,
++            TotalCount = totalCount,
++            TotalPages = totalCount == 0
++                ? 0
++                : (int)Math.Ceiling(totalCount / (double)pageLimit)
++        });
++    }
++
++    private BadRequestObjectResult ValidationError(string message)
++    {
++        return BadRequest(new ErrorResponse
++        {
++            Code = "VALIDATION_ERROR",
++            Message = message
++        });
++    }
++
++    private static bool TryParsePositiveInt(string? value, int defaultValue, out int result)
++    {
++        if (value is null)
++        {
++            result = defaultValue;
++            return true;
++        }
++
++        return int.TryParse(value, out result) && result >= 1;
+     }
+ 
+     private async Task<IActionResult?> ValidateAccessAsync(
+@@ -466,4 +538,4 @@ public class ProjectsController : ControllerBase
+             ? null
+             : trimmed;
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/services/ProjectTaskService/Dtos/PagedTaskResponse.cs b/services/ProjectTaskService/Dtos/PagedTaskResponse.cs
+new file mode 100644
+index 0000000..8136cc0
+--- /dev/null
++++ b/services/ProjectTaskService/Dtos/PagedTaskResponse.cs
+@@ -0,0 +1,14 @@
++namespace ProjectTaskService.Dtos;
++
++public class PagedTaskResponse
++{
++    public List<TaskResponse> Items { get; set; } = new();
++
++    public int Page { get; set; }
++
++    public int Limit { get; set; }
++
++    public int TotalCount { get; set; }
++
++    public int TotalPages { get; set; }
++}
+diff --git a/tests/ProjectTaskService.Tests/ProjectsControllerTests.cs b/tests/ProjectTaskService.Tests/ProjectsControllerTests.cs
+new file mode 100644
+index 0000000..5c62295
+--- /dev/null
++++ b/tests/ProjectTaskService.Tests/ProjectsControllerTests.cs
+@@ -0,0 +1,198 @@
++using Microsoft.AspNetCore.Mvc;
++using Microsoft.EntityFrameworkCore;
++using ProjectTaskService.Clients.UserAccess;
++using ProjectTaskService.Controllers;
++using ProjectTaskService.Data;
++using ProjectTaskService.Dtos;
++using ProjectTaskService.Entities;
++using ProjectTaskService.Enums;
++using Xunit;
++
++namespace ProjectTaskService.Tests;
++
++public class ProjectsControllerTests
++{
++    private static readonly Guid ActorId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
++    private static readonly Guid ProjectId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
++
++    [Fact]
++    public async Task GetTasksByProject_UsesDefaultsStableOrderingAndExcludesDeletedTasks()
++    {
++        using var db = NewDb();
++        db.Projects.Add(NewProject());
++
++        var createdAt = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
++        var firstId = Guid.Parse("00000000-0000-0000-0000-000000000001");
++        var secondId = Guid.Parse("00000000-0000-0000-0000-000000000002");
++        var laterId = Guid.Parse("00000000-0000-0000-0000-000000000003");
++        db.Tasks.AddRange(
++            NewTask(secondId, TaskItemStatus.TODO, createdAt),
++            NewTask(laterId, TaskItemStatus.DONE, createdAt.AddMinutes(1)),
++            NewTask(firstId, TaskItemStatus.IN_PROGRESS, createdAt),
++            NewTask(Guid.NewGuid(), TaskItemStatus.TODO, createdAt, isDeleted: true));
++        await db.SaveChangesAsync();
++
++        var result = await NewController(db).GetTasksByProject(
++            ProjectId, ActorId, CancellationToken.None);
++
++        var response = Assert.IsType<PagedTaskResponse>(Assert.IsType<OkObjectResult>(result).Value);
++        Assert.Equal(1, response.Page);
++        Assert.Equal(20, response.Limit);
++        Assert.Equal(3, response.TotalCount);
++        Assert.Equal(1, response.TotalPages);
++        Assert.Equal(new[] { firstId, secondId, laterId }, response.Items.Select(item => item.Id));
++    }
++
++    [Fact]
++    public async Task GetTasksByProject_AppliesStatusFilterBeforePagination()
++    {
++        using var db = NewDb();
++        db.Projects.Add(NewProject());
++
++        var createdAt = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
++        var firstDoneId = Guid.Parse("00000000-0000-0000-0000-000000000001");
++        var secondDoneId = Guid.Parse("00000000-0000-0000-0000-000000000002");
++        db.Tasks.AddRange(
++            NewTask(firstDoneId, TaskItemStatus.DONE, createdAt),
++            NewTask(Guid.NewGuid(), TaskItemStatus.TODO, createdAt.AddMinutes(1)),
++            NewTask(secondDoneId, TaskItemStatus.DONE, createdAt.AddMinutes(2)));
++        await db.SaveChangesAsync();
++
++        var result = await NewController(db).GetTasksByProject(
++            ProjectId, ActorId, CancellationToken.None, page: "2", limit: "1", status: "done");
++
++        var response = Assert.IsType<PagedTaskResponse>(Assert.IsType<OkObjectResult>(result).Value);
++        Assert.Equal(2, response.Page);
++        Assert.Equal(1, response.Limit);
++        Assert.Equal(2, response.TotalCount);
++        Assert.Equal(2, response.TotalPages);
++        Assert.Equal(secondDoneId, Assert.Single(response.Items).Id);
++    }
++
++    [Fact]
++    public async Task GetTasksByProject_ReturnsEmptyItemsForPagePastLastPage()
++    {
++        using var db = NewDb();
++        db.Projects.Add(NewProject());
++        db.Tasks.Add(NewTask(Guid.NewGuid(), TaskItemStatus.TODO, DateTime.UtcNow));
++        await db.SaveChangesAsync();
++
++        var result = await NewController(db).GetTasksByProject(
++            ProjectId, ActorId, CancellationToken.None, page: int.MaxValue.ToString(), limit: "100");
++
++        var response = Assert.IsType<PagedTaskResponse>(Assert.IsType<OkObjectResult>(result).Value);
++        Assert.Empty(response.Items);
++        Assert.Equal(1, response.TotalCount);
++        Assert.Equal(1, response.TotalPages);
++        Assert.Equal(100, response.Limit);
++    }
++
++    [Theory]
++    [InlineData("0", null, null)]
++    [InlineData("-1", null, null)]
++    [InlineData("not-a-number", null, null)]
++    [InlineData(null, "0", null)]
++    [InlineData(null, "101", null)]
++    [InlineData(null, "not-a-number", null)]
++    [InlineData(null, null, "UNKNOWN")]
++    [InlineData(null, null, "")]
++    [InlineData(null, null, "0")]
++    [InlineData(null, null, "IN_PROGRESS,REVIEW")]
++    public async Task GetTasksByProject_RejectsInvalidQueryParameters(
++        string? page, string? limit, string? status)
++    {
++        using var db = NewDb();
++        db.Projects.Add(NewProject());
++        await db.SaveChangesAsync();
++
++        var result = await NewController(db).GetTasksByProject(
++            ProjectId, ActorId, CancellationToken.None, page, limit, status);
++
++        var error = Assert.IsType<ErrorResponse>(Assert.IsType<BadRequestObjectResult>(result).Value);
++        Assert.Equal("VALIDATION_ERROR", error.Code);
++    }
++
++    [Fact]
++    public async Task GetTasksByProject_PreservesProjectNotFoundHandling()
++    {
++        using var db = NewDb();
++
++        var result = await NewController(db).GetTasksByProject(
++            ProjectId, ActorId, CancellationToken.None);
++
++        var error = Assert.IsType<ErrorResponse>(Assert.IsType<NotFoundObjectResult>(result).Value);
++        Assert.Equal("PROJECT_NOT_FOUND", error.Code);
++    }
++
++    [Fact]
++    public async Task GetTasksByProject_PreservesAccessCheck()
++    {
++        using var db = NewDb();
++        db.Projects.Add(NewProject());
++        await db.SaveChangesAsync();
++
++        var result = await NewController(db, allowed: false).GetTasksByProject(
++            ProjectId, ActorId, CancellationToken.None);
++
++        var objectResult = Assert.IsType<ObjectResult>(result);
++        Assert.Equal(403, objectResult.StatusCode);
++        Assert.Equal("ACCESS_DENIED", Assert.IsType<ErrorResponse>(objectResult.Value).Code);
++    }
++
++    private static ProjectTaskDbContext NewDb()
++    {
++        var options = new DbContextOptionsBuilder<ProjectTaskDbContext>()
++            .UseInMemoryDatabase(Guid.NewGuid().ToString())
++            .Options;
++        return new ProjectTaskDbContext(options);
++    }
++
++    private static ProjectsController NewController(ProjectTaskDbContext db, bool allowed = true) =>
++        new(db, new StubUserAccessClient { Allowed = allowed });
++
++    private static Project NewProject() => new()
++    {
++        Id = ProjectId,
++        Name = "Project",
++        CreatedByUserId = ActorId,
++        CreatedAt = DateTime.UtcNow,
++        UpdatedAt = DateTime.UtcNow
++    };
++
++    private static TaskItem NewTask(
++        Guid id,
++        TaskItemStatus status,
++        DateTime createdAt,
++        bool isDeleted = false) => new()
++    {
++        Id = id,
++        ProjectId = ProjectId,
++        Title = $"Task {id}",
++        CreatedByUserId = ActorId,
++        Status = status,
++        CreatedAt = createdAt,
++        UpdatedAt = createdAt,
++        IsDeleted = isDeleted
++    };
++
++    private sealed class StubUserAccessClient : IUserAccessClient
++    {
++        public bool Allowed { get; init; }
++
++        public Task<UserAccessUserResponse?> GetUserByIdAsync(Guid id, CancellationToken ct) =>
++            Task.FromResult<UserAccessUserResponse?>(null);
++
++        public Task<bool> AddProjectOwnerAsync(Guid projectId, Guid ownerUserId, CancellationToken ct) =>
++            Task.FromResult(true);
++
++        public Task<AccessCheckResponse?> CheckAccessAsync(
++            Guid userId,
++            Guid projectId,
++            ProjectAction action,
++            CancellationToken ct) =>
++            Task.FromResult<AccessCheckResponse?>(new AccessCheckResponse { Allowed = Allowed });
++
++        public Task<bool> IsMemberAsync(Guid userId, Guid projectId, CancellationToken ct) =>
++            Task.FromResult(true);
++    }
++}

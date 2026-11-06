@@ -1,0 +1,529 @@
+diff --git a/docs/openapi/project-task-service.openapi.yaml b/docs/openapi/project-task-service.openapi.yaml
+index c0982e9..0dcaeeb 100644
+--- a/docs/openapi/project-task-service.openapi.yaml
++++ b/docs/openapi/project-task-service.openapi.yaml
+@@ -99,15 +99,35 @@ paths:
+       parameters:
+         - $ref: '#/components/parameters/ProjectIdPath'
+         - $ref: '#/components/parameters/ActorUserIdHeader'
++        - name: page
++          in: query
++          required: false
++          schema:
++            type: integer
++            minimum: 1
++            default: 1
++        - name: limit
++          in: query
++          required: false
++          schema:
++            type: integer
++            minimum: 1
++            maximum: 100
++            default: 20
++        - name: status
++          in: query
++          required: false
++          schema: { $ref: '#/components/schemas/TaskStatus' }
+       responses:
+         '200':
+-          description: Список задач проекта
++          description: Страница задач проекта
+           content:
+             application/json:
+-              schema:
+-                type: array
+-                items: { $ref: '#/components/schemas/TaskResponse' }
++              schema: { $ref: '#/components/schemas/PagedTaskResponse' }
++        '400': { $ref: '#/components/responses/BadRequest' }
++        '401': { $ref: '#/components/responses/Unauthorized' }
+         '403': { $ref: '#/components/responses/Forbidden' }
++        '404': { $ref: '#/components/responses/NotFound' }
+   /tasks/{taskId}:
+     get:
+       summary: Получить задачу
+@@ -391,6 +411,17 @@ components:
+           type: array
+           items:
+             $ref: '#/components/schemas/LabelResponse'
++    PagedTaskResponse:
++      type: object
++      required: [items, page, limit, totalCount, totalPages]
++      properties:
++        items:
++          type: array
++          items: { $ref: '#/components/schemas/TaskResponse' }
++        page: { type: integer, minimum: 1 }
++        limit: { type: integer, minimum: 1, maximum: 100 }
++        totalCount: { type: integer, minimum: 0 }
++        totalPages: { type: integer, minimum: 0 }
+     AddCommentRequest:
+       type: object
+       required: [text]
+diff --git a/services/ProjectTaskService/Controllers/ProjectsController.cs b/services/ProjectTaskService/Controllers/ProjectsController.cs
+index f74a82a..b45c013 100644
+--- a/services/ProjectTaskService/Controllers/ProjectsController.cs
++++ b/services/ProjectTaskService/Controllers/ProjectsController.cs
+@@ -1,3 +1,4 @@
++using System.Globalization;
+ using System.Text.Json;
+ using Microsoft.AspNetCore.Mvc;
+ using Microsoft.EntityFrameworkCore;
+@@ -6,6 +7,7 @@ using ProjectTaskService.Data;
+ using ProjectTaskService.Dtos;
+ using ProjectTaskService.Entities;
+ using ProjectTaskService.Enums;
++using ProjectTaskService.Services;
+ 
+ namespace ProjectTaskService.Controllers;
+ 
+@@ -15,13 +17,16 @@ public class ProjectsController : ControllerBase
+ {
+     private readonly ProjectTaskDbContext _dbContext;
+     private readonly IUserAccessClient _userAccessClient;
++    private readonly ITaskService _taskService;
+ 
+     public ProjectsController(
+         ProjectTaskDbContext dbContext,
+-        IUserAccessClient userAccessClient)
++        IUserAccessClient userAccessClient,
++        ITaskService taskService)
+     {
+         _dbContext = dbContext;
+         _userAccessClient = userAccessClient;
++        _taskService = taskService;
+     }
+ 
+     [HttpPost]
+@@ -359,42 +364,73 @@ public class ProjectsController : ControllerBase
+     }
+ 
+     [HttpGet("{projectId:guid}/tasks")]
+-    public async Task<IActionResult> GetTasksByProject(
+-    Guid projectId,
+-    [FromHeader(Name = "X-User-Id")] Guid? actorUserId,
+-    CancellationToken cancellationToken)
++    public Task<IActionResult> GetTasksByProject(
++        Guid projectId,
++        [FromHeader(Name = "X-User-Id")] Guid? actorUserId,
++        [FromQuery] string? page,
++        [FromQuery] string? limit,
++        [FromQuery] string? status,
++        CancellationToken cancellationToken)
+     {
+-        var project = await _dbContext.Projects
+-            .FirstOrDefaultAsync(p => p.Id == projectId, cancellationToken);
+-        if (project == null)
+-            return NotFound(new ErrorResponse
+-            {
+-                Code = "PROJECT_NOT_FOUND",
+-                Message = "Project not found"
+-            });
++        if (!TryParsePositiveInt(page, 1, out var parsedPage))
++            return Task.FromResult<IActionResult>(ValidationError("Page must be an integer greater than or equal to 1"));
+ 
+-        var accessError = await ValidateAccessAsync(actorUserId, projectId, ProjectAction.ViewTask, cancellationToken);
+-        if (accessError != null)
+-            return accessError;
++        if (!TryParsePositiveInt(limit, 20, out var parsedLimit) || parsedLimit > 100)
++            return Task.FromResult<IActionResult>(ValidationError("Limit must be an integer between 1 and 100"));
++
++        TaskItemStatus? parsedStatus = null;
++        if (status is not null && !Enum.GetNames<TaskItemStatus>()
++            .Any(name => string.Equals(name, status, StringComparison.OrdinalIgnoreCase)))
++        {
++            return Task.FromResult<IActionResult>(ValidationError("Status is invalid"));
++        }
++
++        if (status is not null)
++            parsedStatus = Enum.Parse<TaskItemStatus>(status, ignoreCase: true);
+ 
+-        var tasks = await _dbContext.Tasks
+-            .Where(t => t.ProjectId == projectId && !t.IsDeleted)
+-            .OrderBy(t => t.CreatedAt)
+-            .Select(t => new TaskResponse
++        return ExecuteTaskOperationAsync(async () => Ok(await _taskService.GetByProjectAsync(
++            projectId,
++            actorUserId,
++            parsedPage,
++            parsedLimit,
++            parsedStatus,
++            cancellationToken)));
++    }
++
++    private static bool TryParsePositiveInt(string? value, int defaultValue, out int result)
++    {
++        if (value is null)
++        {
++            result = defaultValue;
++            return true;
++        }
++
++        return int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out result) && result >= 1;
++    }
++
++    private BadRequestObjectResult ValidationError(string message) =>
++        BadRequest(new ErrorResponse { Code = "VALIDATION_ERROR", Message = message });
++
++    private async Task<IActionResult> ExecuteTaskOperationAsync(Func<Task<IActionResult>> action)
++    {
++        try
++        {
++            return await action();
++        }
++        catch (TaskOperationException ex)
++        {
++            var statusCode = ex.Kind switch
+             {
+-                Id = t.Id,
+-                ProjectId = t.ProjectId,
+-                Title = t.Title,
+-                Description = t.Description,
+-                Status = t.Status,
+-                AssigneeUserId = t.AssigneeUserId,
+-                CreatedByUserId = t.CreatedByUserId,
+-                CreatedAt = t.CreatedAt,
+-                UpdatedAt = t.UpdatedAt
+-            })
+-            .ToListAsync(cancellationToken);
+-
+-        return Ok(tasks);
++                TaskErrorKind.Validation => 400,
++                TaskErrorKind.Unauthorized => 401,
++                TaskErrorKind.Forbidden => 403,
++                TaskErrorKind.NotFound => 404,
++                TaskErrorKind.Conflict => 409,
++                TaskErrorKind.DependencyUnavailable => 502,
++                _ => 500
++            };
++            return StatusCode(statusCode, new ErrorResponse { Code = ex.Code, Message = ex.Message });
++        }
+     }
+ 
+     private async Task<IActionResult?> ValidateAccessAsync(
+@@ -466,4 +502,4 @@ public class ProjectsController : ControllerBase
+             ? null
+             : trimmed;
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/services/ProjectTaskService/Dtos/PagedTaskResponse.cs b/services/ProjectTaskService/Dtos/PagedTaskResponse.cs
+new file mode 100644
+index 0000000..8136cc0
+--- /dev/null
++++ b/services/ProjectTaskService/Dtos/PagedTaskResponse.cs
+@@ -0,0 +1,14 @@
++namespace ProjectTaskService.Dtos;
++
++public class PagedTaskResponse
++{
++    public List<TaskResponse> Items { get; set; } = new();
++
++    public int Page { get; set; }
++
++    public int Limit { get; set; }
++
++    public int TotalCount { get; set; }
++
++    public int TotalPages { get; set; }
++}
+diff --git a/services/ProjectTaskService/Repositories/ITaskRepository.cs b/services/ProjectTaskService/Repositories/ITaskRepository.cs
+index 1877639..b73ec56 100644
+--- a/services/ProjectTaskService/Repositories/ITaskRepository.cs
++++ b/services/ProjectTaskService/Repositories/ITaskRepository.cs
+@@ -1,5 +1,6 @@
+ using ProjectTaskService.Dtos;
+ using ProjectTaskService.Entities;
++using ProjectTaskService.Enums;
+ 
+ namespace ProjectTaskService.Repositories;
+ 
+@@ -7,6 +8,12 @@ public interface ITaskRepository
+ {
+     Task<Project?> GetProjectAsync(Guid projectId, CancellationToken ct);
+     Task<TaskItem?> GetTaskAsync(Guid taskId, CancellationToken ct);
++    Task<(List<TaskItem> Items, int TotalCount)> GetTasksPageAsync(
++        Guid projectId,
++        int page,
++        int limit,
++        TaskItemStatus? status,
++        CancellationToken ct);
+     Task<List<LabelResponse>> GetActiveLabelsAsync(Guid taskId, CancellationToken ct);
+     void AddTask(TaskItem task);
+     void AddHistory(TaskHistory history);
+diff --git a/services/ProjectTaskService/Repositories/TaskRepository.cs b/services/ProjectTaskService/Repositories/TaskRepository.cs
+index 98c8002..acb3b5f 100644
+--- a/services/ProjectTaskService/Repositories/TaskRepository.cs
++++ b/services/ProjectTaskService/Repositories/TaskRepository.cs
+@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
+ using ProjectTaskService.Data;
+ using ProjectTaskService.Dtos;
+ using ProjectTaskService.Entities;
++using ProjectTaskService.Enums;
+ 
+ namespace ProjectTaskService.Repositories;
+ 
+@@ -17,6 +18,35 @@ public class TaskRepository : ITaskRepository
+     public Task<TaskItem?> GetTaskAsync(Guid taskId, CancellationToken ct) =>
+         _db.Tasks.FirstOrDefaultAsync(t => t.Id == taskId && !t.IsDeleted, ct);
+ 
++    public async Task<(List<TaskItem> Items, int TotalCount)> GetTasksPageAsync(
++        Guid projectId,
++        int page,
++        int limit,
++        TaskItemStatus? status,
++        CancellationToken ct)
++    {
++        var query = _db.Tasks
++            .AsNoTracking()
++            .Where(task => task.ProjectId == projectId && !task.IsDeleted);
++
++        if (status.HasValue)
++            query = query.Where(task => task.Status == status.Value);
++
++        var totalCount = await query.CountAsync(ct);
++        var offset = ((long)page - 1) * limit;
++        if (offset > int.MaxValue)
++            return (new List<TaskItem>(), totalCount);
++
++        var items = await query
++            .OrderBy(task => task.CreatedAt)
++            .ThenBy(task => task.Id)
++            .Skip((int)offset)
++            .Take(limit)
++            .ToListAsync(ct);
++
++        return (items, totalCount);
++    }
++
+     public Task<List<LabelResponse>> GetActiveLabelsAsync(Guid taskId, CancellationToken ct) =>
+         _db.TaskLabels
+             .Where(link => link.TaskId == taskId)
+diff --git a/services/ProjectTaskService/Services/ITaskService.cs b/services/ProjectTaskService/Services/ITaskService.cs
+index 7b433df..53fc406 100644
+--- a/services/ProjectTaskService/Services/ITaskService.cs
++++ b/services/ProjectTaskService/Services/ITaskService.cs
+@@ -1,4 +1,5 @@
+ using ProjectTaskService.Dtos;
++using ProjectTaskService.Enums;
+ 
+ namespace ProjectTaskService.Services;
+ 
+@@ -6,6 +7,13 @@ public interface ITaskService
+ {
+     Task<TaskResponse> CreateAsync(CreateTaskRequest request, CancellationToken ct);
+     Task<TaskResponse> GetAsync(Guid id, Guid? actorUserId, CancellationToken ct);
++    Task<PagedTaskResponse> GetByProjectAsync(
++        Guid projectId,
++        Guid? actorUserId,
++        int page,
++        int limit,
++        TaskItemStatus? status,
++        CancellationToken ct);
+     Task UpdateAsync(Guid id, UpdateTaskRequest request, Guid actorUserId, CancellationToken ct);
+     Task ChangeStatusAsync(Guid id, ChangeStatusRequest request, CancellationToken ct);
+     Task AssignAsync(Guid id, AssignAssigneeRequest request, CancellationToken ct);
+diff --git a/services/ProjectTaskService/Services/TaskService.cs b/services/ProjectTaskService/Services/TaskService.cs
+index 11725ba..fb39923 100644
+--- a/services/ProjectTaskService/Services/TaskService.cs
++++ b/services/ProjectTaskService/Services/TaskService.cs
+@@ -55,6 +55,36 @@ public class TaskService : ITaskService
+         return ToResponse(task, labels);
+     }
+ 
++    public async Task<PagedTaskResponse> GetByProjectAsync(
++        Guid projectId,
++        Guid? actorUserId,
++        int page,
++        int limit,
++        TaskItemStatus? status,
++        CancellationToken ct)
++    {
++        if (page < 1)
++            Fail(TaskErrorKind.Validation, "VALIDATION_ERROR", "Page must be greater than or equal to 1");
++        if (limit is < 1 or > 100)
++            Fail(TaskErrorKind.Validation, "VALIDATION_ERROR", "Limit must be between 1 and 100");
++        if (status.HasValue && !Enum.IsDefined(status.Value))
++            Fail(TaskErrorKind.Validation, "VALIDATION_ERROR", "Status is invalid");
++
++        await GetProjectAsync(projectId, ct);
++        await CheckAccessAsync(actorUserId, projectId, ProjectAction.ViewTask, ct);
++
++        var (items, totalCount) = await _tasks.GetTasksPageAsync(projectId, page, limit, status, ct);
++
++        return new PagedTaskResponse
++        {
++            Items = items.Select(task => ToResponse(task)).ToList(),
++            Page = page,
++            Limit = limit,
++            TotalCount = totalCount,
++            TotalPages = (int)Math.Ceiling(totalCount / (double)limit)
++        };
++    }
++
+     public async Task UpdateAsync(Guid id, UpdateTaskRequest request, Guid actorUserId, CancellationToken ct)
+     {
+         RequireUser(actorUserId, "X-User-Id is required");
+diff --git a/tests/ProjectTaskService.Tests/TaskServiceTests.cs b/tests/ProjectTaskService.Tests/TaskServiceTests.cs
+index 0d58cb2..e408bc2 100644
+--- a/tests/ProjectTaskService.Tests/TaskServiceTests.cs
++++ b/tests/ProjectTaskService.Tests/TaskServiceTests.cs
+@@ -1,5 +1,7 @@
+ using Microsoft.EntityFrameworkCore;
++using Microsoft.AspNetCore.Mvc;
+ using ProjectTaskService.Clients.UserAccess;
++using ProjectTaskService.Controllers;
+ using ProjectTaskService.Data;
+ using ProjectTaskService.Dtos;
+ using ProjectTaskService.Entities;
+@@ -107,6 +109,126 @@ public class TaskServiceTests
+         Assert.Equal("Bug", result.Labels[0].Name);
+     }
+ 
++    [Fact]
++    public async Task GetByProject_FiltersPaginatesOrdersAndExcludesDeletedTasks()
++    {
++        using var db = NewDb();
++        db.Projects.Add(NewProject());
++        var firstId = Guid.Parse("00000000-0000-0000-0000-000000000001");
++        var secondId = Guid.Parse("00000000-0000-0000-0000-000000000002");
++        var thirdId = Guid.Parse("00000000-0000-0000-0000-000000000003");
++        var createdAt = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
++        db.Tasks.AddRange(
++            NewTask(firstId, TaskItemStatus.TODO, createdAt),
++            NewTask(secondId, TaskItemStatus.TODO, createdAt),
++            NewTask(thirdId, TaskItemStatus.TODO, createdAt.AddMinutes(1)),
++            NewTask(Guid.NewGuid(), TaskItemStatus.DONE, createdAt.AddMinutes(-1)),
++            NewTask(Guid.NewGuid(), TaskItemStatus.TODO, createdAt.AddMinutes(-2), isDeleted: true));
++        await db.SaveChangesAsync();
++
++        var service = NewService(db);
++        var firstPage = await service.GetByProjectAsync(
++            ProjectId, OwnerId, page: 1, limit: 2, TaskItemStatus.TODO, CancellationToken.None);
++        var result = await service.GetByProjectAsync(
++            ProjectId, OwnerId, page: 2, limit: 2, TaskItemStatus.TODO, CancellationToken.None);
++
++        Assert.Collection(
++            firstPage.Items,
++            item => Assert.Equal(firstId, item.Id),
++            item => Assert.Equal(secondId, item.Id));
++        Assert.Equal(3, result.TotalCount);
++        Assert.Equal(2, result.TotalPages);
++        Assert.Equal(2, result.Page);
++        Assert.Equal(2, result.Limit);
++        Assert.Collection(result.Items, item => Assert.Equal(thirdId, item.Id));
++    }
++
++    [Fact]
++    public async Task GetByProject_PageBeyondResults_ReturnsEmptyItemsWithFilteredCount()
++    {
++        using var db = NewDb();
++        db.Projects.Add(NewProject());
++        db.Tasks.Add(NewTask());
++        await db.SaveChangesAsync();
++
++        var result = await NewService(db).GetByProjectAsync(
++            ProjectId, OwnerId, page: int.MaxValue, limit: 100, status: null, CancellationToken.None);
++
++        Assert.Empty(result.Items);
++        Assert.Equal(1, result.TotalCount);
++        Assert.Equal(1, result.TotalPages);
++    }
++
++    [Fact]
++    public async Task GetByProject_RejectsForbiddenAccess()
++    {
++        using var db = NewDb();
++        db.Projects.Add(NewProject());
++        await db.SaveChangesAsync();
++
++        var error = await Assert.ThrowsAsync<TaskOperationException>(() =>
++            NewService(db, allowed: false).GetByProjectAsync(
++                ProjectId, OwnerId, 1, 20, null, CancellationToken.None));
++
++        Assert.Equal("ACCESS_DENIED", error.Code);
++    }
++
++    [Fact]
++    public async Task GetByProject_MissingProject_ReturnsNotFoundBeforeAccessCheck()
++    {
++        using var db = NewDb();
++
++        var error = await Assert.ThrowsAsync<TaskOperationException>(() =>
++            NewService(db, allowed: false).GetByProjectAsync(
++                ProjectId, OwnerId, 1, 20, null, CancellationToken.None));
++
++        Assert.Equal("PROJECT_NOT_FOUND", error.Code);
++        Assert.Equal(TaskErrorKind.NotFound, error.Kind);
++    }
++
++    [Fact]
++    public async Task GetTasksByProject_UsesPaginationDefaults()
++    {
++        using var db = NewDb();
++        db.Projects.Add(NewProject());
++        await db.SaveChangesAsync();
++        var access = new StubUserAccessClient { Allowed = true, IsMember = true };
++        var controller = new ProjectsController(db, access, new TaskService(new TaskRepository(db), access));
++
++        var action = await controller.GetTasksByProject(
++            ProjectId, OwnerId, page: null, limit: null, status: null, CancellationToken.None);
++
++        var response = Assert.IsType<PagedTaskResponse>(Assert.IsType<OkObjectResult>(action).Value);
++        Assert.Equal(1, response.Page);
++        Assert.Equal(20, response.Limit);
++        Assert.Equal(0, response.TotalCount);
++        Assert.Equal(0, response.TotalPages);
++    }
++
++    [Theory]
++    [InlineData("0", null, null)]
++    [InlineData("abc", null, null)]
++    [InlineData(null, "0", null)]
++    [InlineData(null, "101", null)]
++    [InlineData(null, "abc", null)]
++    [InlineData(null, null, "UNKNOWN")]
++    [InlineData(null, null, "1")]
++    public async Task GetTasksByProject_InvalidQuery_ReturnsStructuredValidationError(
++        string? page,
++        string? limit,
++        string? status)
++    {
++        using var db = NewDb();
++        var access = new StubUserAccessClient { Allowed = true, IsMember = true };
++        var controller = new ProjectsController(db, access, new TaskService(new TaskRepository(db), access));
++
++        var action = await controller.GetTasksByProject(
++            ProjectId, OwnerId, page, limit, status, CancellationToken.None);
++
++        var response = Assert.IsType<ErrorResponse>(Assert.IsType<BadRequestObjectResult>(action).Value);
++        Assert.Equal("VALIDATION_ERROR", response.Code);
++    }
++
+     [Fact]
+     public async Task ChangeStatus_RejectsInvalidTransition()
+     {
+@@ -215,6 +337,22 @@ public class TaskServiceTests
+         CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
+     };
+ 
++    private static TaskItem NewTask(
++        Guid id,
++        TaskItemStatus status,
++        DateTime createdAt,
++        bool isDeleted = false) => new()
++    {
++        Id = id,
++        ProjectId = ProjectId,
++        Title = "Task",
++        CreatedByUserId = OwnerId,
++        Status = status,
++        CreatedAt = createdAt,
++        UpdatedAt = createdAt,
++        IsDeleted = isDeleted
++    };
++
+     private static TaskService NewService(ProjectTaskDbContext db, bool allowed = true, bool isMember = true) =>
+         new(new TaskRepository(db), new StubUserAccessClient { Allowed = allowed, IsMember = isMember });
+ 

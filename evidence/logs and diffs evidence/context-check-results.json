@@ -1,0 +1,184 @@
+{
+  "generated_utc": "2026-11-06T16:19:58.163489+00:00",
+  "method": "static source heuristics; flags are not verified runtime failures",
+  "rules": {
+    "architecture": "HTTP → service → repository for the new task-list behavior",
+    "authorization": "Task-list route retains task-view authorization",
+    "soft_delete": "Task-list query excludes soft-deleted tasks",
+    "typed_dto": "Paged response is a typed DTO with TaskResponse items",
+    "validation_errors": "Added validation uses VALIDATION_ERROR and HTTP 400",
+    "cancellation": "Request cancellation token is propagated",
+    "openapi": "Updated OpenAPI describes pagination and filter parameters"
+  },
+  "runs": {
+    "baseline-1": {
+      "ref": "baseline-attempt-1",
+      "base": "lab-base",
+      "commit": "d4e68db20ba561026b038a3936a58c4d88c9d718",
+      "changed_files": [
+        "services/ProjectTaskService/Controllers/ProjectsController.cs",
+        "services/ProjectTaskService/Dtos/PagedTaskResponse.cs",
+        "tests/ProjectTaskService.Tests/ProjectsControllerTests.cs"
+      ],
+      "rules": {
+        "architecture": false,
+        "authorization": true,
+        "soft_delete": true,
+        "typed_dto": true,
+        "validation_errors": true,
+        "cancellation": true,
+        "openapi": false
+      },
+      "static_flags": 2,
+      "test_files_changed": [
+        "tests/ProjectTaskService.Tests/ProjectsControllerTests.cs"
+      ],
+      "build": "pass",
+      "test": "pass"
+    },
+    "baseline-2": {
+      "ref": "baseline-attempt-2",
+      "base": "lab-base",
+      "commit": "3dcf27ba41ac691464729469b19f888537c89ad6",
+      "changed_files": [
+        "docs/openapi/project-task-service.openapi.yaml",
+        "services/ProjectTaskService/Controllers/ProjectsController.cs",
+        "services/ProjectTaskService/Dtos/PagedTasksResponse.cs",
+        "tests/ProjectTaskService.Tests/ProjectsControllerTaskListTests.cs"
+      ],
+      "rules": {
+        "architecture": false,
+        "authorization": true,
+        "soft_delete": true,
+        "typed_dto": true,
+        "validation_errors": true,
+        "cancellation": true,
+        "openapi": true
+      },
+      "static_flags": 1,
+      "test_files_changed": [
+        "tests/ProjectTaskService.Tests/ProjectsControllerTaskListTests.cs"
+      ],
+      "build": "pass",
+      "test": "pass"
+    },
+    "baseline-3": {
+      "ref": "baseline-attempt-3",
+      "base": "lab-base",
+      "commit": "d5262850318c2a0225605d676e43161dc4aae5da",
+      "changed_files": [
+        "docs/openapi/project-task-service.openapi.yaml",
+        "services/ProjectTaskService/Controllers/ProjectsController.cs",
+        "services/ProjectTaskService/Dtos/PagedTaskResponse.cs",
+        "tests/ProjectTaskService.Tests/ProjectsControllerTests.cs"
+      ],
+      "rules": {
+        "architecture": false,
+        "authorization": true,
+        "soft_delete": true,
+        "typed_dto": true,
+        "validation_errors": true,
+        "cancellation": true,
+        "openapi": true
+      },
+      "static_flags": 1,
+      "test_files_changed": [
+        "tests/ProjectTaskService.Tests/ProjectsControllerTests.cs"
+      ],
+      "build": "pass",
+      "test": "pass"
+    },
+    "context-1": {
+      "ref": "context-attempt-1",
+      "base": "context-setup",
+      "commit": "1c077a83370cdff9cc1733ee6d904af14b0b7cc5",
+      "changed_files": [
+        "docs/openapi/project-task-service.openapi.yaml",
+        "services/ProjectTaskService/Controllers/ProjectsController.cs",
+        "services/ProjectTaskService/Dtos/PagedTaskResponse.cs",
+        "services/ProjectTaskService/Repositories/ITaskRepository.cs",
+        "services/ProjectTaskService/Repositories/TaskRepository.cs",
+        "services/ProjectTaskService/Services/ITaskService.cs",
+        "services/ProjectTaskService/Services/TaskService.cs",
+        "tests/ProjectTaskService.Tests/TaskServiceTests.cs"
+      ],
+      "rules": {
+        "architecture": true,
+        "authorization": true,
+        "soft_delete": true,
+        "typed_dto": true,
+        "validation_errors": true,
+        "cancellation": true,
+        "openapi": true
+      },
+      "static_flags": 0,
+      "test_files_changed": [
+        "tests/ProjectTaskService.Tests/TaskServiceTests.cs"
+      ],
+      "build": "pass",
+      "test": "pass"
+    },
+    "context-2": {
+      "ref": "context-attempt-2",
+      "base": "context-setup",
+      "commit": "05e677ee352831b46ea94c78bbb02291d2287f20",
+      "changed_files": [
+        "docs/openapi/project-task-service.openapi.yaml",
+        "services/ProjectTaskService/Controllers/ProjectsController.cs",
+        "services/ProjectTaskService/Dtos/PagedTaskResponse.cs",
+        "services/ProjectTaskService/Repositories/ITaskRepository.cs",
+        "services/ProjectTaskService/Repositories/TaskRepository.cs",
+        "services/ProjectTaskService/Services/ITaskService.cs",
+        "services/ProjectTaskService/Services/TaskService.cs",
+        "tests/ProjectTaskService.Tests/ProjectsControllerTaskListTests.cs",
+        "tests/ProjectTaskService.Tests/TaskServiceTests.cs"
+      ],
+      "rules": {
+        "architecture": true,
+        "authorization": true,
+        "soft_delete": true,
+        "typed_dto": true,
+        "validation_errors": true,
+        "cancellation": true,
+        "openapi": true
+      },
+      "static_flags": 0,
+      "test_files_changed": [
+        "tests/ProjectTaskService.Tests/ProjectsControllerTaskListTests.cs",
+        "tests/ProjectTaskService.Tests/TaskServiceTests.cs"
+      ],
+      "build": "pass",
+      "test": "pass"
+    },
+    "context-3": {
+      "ref": "context-attempt-3",
+      "base": "context-setup",
+      "commit": "0c7c0d11c4abf0e5aca24342a8b4e8ca0074bd37",
+      "changed_files": [
+        "docs/openapi/project-task-service.openapi.yaml",
+        "services/ProjectTaskService/Controllers/ProjectsController.cs",
+        "services/ProjectTaskService/Dtos/PagedTaskResponse.cs",
+        "services/ProjectTaskService/Repositories/ITaskRepository.cs",
+        "services/ProjectTaskService/Repositories/TaskRepository.cs",
+        "services/ProjectTaskService/Services/ITaskService.cs",
+        "services/ProjectTaskService/Services/TaskService.cs",
+        "tests/ProjectTaskService.Tests/TaskServiceTests.cs"
+      ],
+      "rules": {
+        "architecture": true,
+        "authorization": true,
+        "soft_delete": true,
+        "typed_dto": true,
+        "validation_errors": true,
+        "cancellation": true,
+        "openapi": true
+      },
+      "static_flags": 0,
+      "test_files_changed": [
+        "tests/ProjectTaskService.Tests/TaskServiceTests.cs"
+      ],
+      "build": "pass",
+      "test": "pass"
+    }
+  }
+}

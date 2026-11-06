@@ -1,0 +1,317 @@
+diff --git a/docs/openapi/project-task-service.openapi.yaml b/docs/openapi/project-task-service.openapi.yaml
+index c0982e9..164bf7d 100644
+--- a/docs/openapi/project-task-service.openapi.yaml
++++ b/docs/openapi/project-task-service.openapi.yaml
+@@ -108,6 +108,27 @@ paths:
+                 type: array
+                 items: { $ref: '#/components/schemas/TaskResponse' }
+         '403': { $ref: '#/components/responses/Forbidden' }
++  /projects/{projectId}/tasks/statistics:
++    get:
++      summary: Получить статистику задач проекта
++      tags: [Tasks]
++      parameters:
++        - $ref: '#/components/parameters/ProjectIdPath'
++        - $ref: '#/components/parameters/ActorUserIdHeader'
++      responses:
++        '200':
++          description: Статистика неудалённых задач проекта
++          content:
++            application/json:
++              schema: { $ref: '#/components/schemas/TaskStatisticsResponse' }
++        '401': { $ref: '#/components/responses/Unauthorized' }
++        '403': { $ref: '#/components/responses/Forbidden' }
++        '404': { $ref: '#/components/responses/NotFound' }
++        '502':
++          description: Ошибка проверки доступа
++          content:
++            application/json:
++              schema: { $ref: '#/components/schemas/ErrorResponse' }
+   /tasks/{taskId}:
+     get:
+       summary: Получить задачу
+@@ -391,6 +412,21 @@ components:
+           type: array
+           items:
+             $ref: '#/components/schemas/LabelResponse'
++    TaskStatisticsResponse:
++      type: object
++      required: [totalCount, byStatus]
++      properties:
++        totalCount: { type: integer, format: int32, minimum: 0 }
++        byStatus:
++          $ref: '#/components/schemas/TaskStatisticsByStatusResponse'
++    TaskStatisticsByStatusResponse:
++      type: object
++      required: [todo, inProgress, review, done]
++      properties:
++        todo: { type: integer, format: int32, minimum: 0 }
++        inProgress: { type: integer, format: int32, minimum: 0 }
++        review: { type: integer, format: int32, minimum: 0 }
++        done: { type: integer, format: int32, minimum: 0 }
+     AddCommentRequest:
+       type: object
+       required: [text]
+diff --git a/services/ProjectTaskService/Controllers/TasksController.cs b/services/ProjectTaskService/Controllers/TasksController.cs
+index 2f83e97..028bbcd 100644
+--- a/services/ProjectTaskService/Controllers/TasksController.cs
++++ b/services/ProjectTaskService/Controllers/TasksController.cs
+@@ -25,6 +25,14 @@ public class TasksController : ControllerBase
+         [FromHeader(Name = "X-User-Id")] Guid? actorUserId, CancellationToken ct) =>
+         ExecuteAsync(async () => Ok(await _tasks.GetAsync(id, actorUserId, ct)));
+ 
++    [HttpGet("/projects/{projectId:guid}/tasks/statistics")]
++    public Task<IActionResult> GetTaskStatistics(
++        Guid projectId,
++        [FromHeader(Name = "X-User-Id")] Guid? actorUserId,
++        CancellationToken ct) =>
++        ExecuteAsync(async () =>
++            Ok(await _tasks.GetStatisticsAsync(projectId, actorUserId, ct)));
++
+     [HttpPatch("{id:guid}")]
+     public Task<IActionResult> UpdateTask(Guid id, UpdateTaskRequest request,
+         [FromHeader(Name = "X-User-Id")] Guid actorUserId, CancellationToken ct) =>
+diff --git a/services/ProjectTaskService/Dtos/TaskStatisticsResponse.cs b/services/ProjectTaskService/Dtos/TaskStatisticsResponse.cs
+new file mode 100644
+index 0000000..f3f0994
+--- /dev/null
++++ b/services/ProjectTaskService/Dtos/TaskStatisticsResponse.cs
+@@ -0,0 +1,15 @@
++namespace ProjectTaskService.Dtos;
++
++public class TaskStatisticsResponse
++{
++    public int TotalCount { get; set; }
++    public TaskStatisticsByStatusResponse ByStatus { get; set; } = new();
++}
++
++public class TaskStatisticsByStatusResponse
++{
++    public int Todo { get; set; }
++    public int InProgress { get; set; }
++    public int Review { get; set; }
++    public int Done { get; set; }
++}
+diff --git a/services/ProjectTaskService/Repositories/ITaskRepository.cs b/services/ProjectTaskService/Repositories/ITaskRepository.cs
+index 1877639..3956eee 100644
+--- a/services/ProjectTaskService/Repositories/ITaskRepository.cs
++++ b/services/ProjectTaskService/Repositories/ITaskRepository.cs
+@@ -1,5 +1,6 @@
+ using ProjectTaskService.Dtos;
+ using ProjectTaskService.Entities;
++using ProjectTaskService.Enums;
+ 
+ namespace ProjectTaskService.Repositories;
+ 
+@@ -7,6 +8,8 @@ public interface ITaskRepository
+ {
+     Task<Project?> GetProjectAsync(Guid projectId, CancellationToken ct);
+     Task<TaskItem?> GetTaskAsync(Guid taskId, CancellationToken ct);
++    Task<Dictionary<TaskItemStatus, int>> GetTaskCountsByStatusAsync(
++        Guid projectId, CancellationToken ct);
+     Task<List<LabelResponse>> GetActiveLabelsAsync(Guid taskId, CancellationToken ct);
+     void AddTask(TaskItem task);
+     void AddHistory(TaskHistory history);
+diff --git a/services/ProjectTaskService/Repositories/TaskRepository.cs b/services/ProjectTaskService/Repositories/TaskRepository.cs
+index 98c8002..94974ce 100644
+--- a/services/ProjectTaskService/Repositories/TaskRepository.cs
++++ b/services/ProjectTaskService/Repositories/TaskRepository.cs
+@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
+ using ProjectTaskService.Data;
+ using ProjectTaskService.Dtos;
+ using ProjectTaskService.Entities;
++using ProjectTaskService.Enums;
+ 
+ namespace ProjectTaskService.Repositories;
+ 
+@@ -17,6 +18,14 @@ public class TaskRepository : ITaskRepository
+     public Task<TaskItem?> GetTaskAsync(Guid taskId, CancellationToken ct) =>
+         _db.Tasks.FirstOrDefaultAsync(t => t.Id == taskId && !t.IsDeleted, ct);
+ 
++    public Task<Dictionary<TaskItemStatus, int>> GetTaskCountsByStatusAsync(
++        Guid projectId, CancellationToken ct) =>
++        _db.Tasks
++            .Where(task => task.ProjectId == projectId && !task.IsDeleted)
++            .GroupBy(task => task.Status)
++            .Select(group => new { Status = group.Key, Count = group.Count() })
++            .ToDictionaryAsync(item => item.Status, item => item.Count, ct);
++
+     public Task<List<LabelResponse>> GetActiveLabelsAsync(Guid taskId, CancellationToken ct) =>
+         _db.TaskLabels
+             .Where(link => link.TaskId == taskId)
+diff --git a/services/ProjectTaskService/Services/ITaskService.cs b/services/ProjectTaskService/Services/ITaskService.cs
+index 7b433df..dac7c67 100644
+--- a/services/ProjectTaskService/Services/ITaskService.cs
++++ b/services/ProjectTaskService/Services/ITaskService.cs
+@@ -6,6 +6,8 @@ public interface ITaskService
+ {
+     Task<TaskResponse> CreateAsync(CreateTaskRequest request, CancellationToken ct);
+     Task<TaskResponse> GetAsync(Guid id, Guid? actorUserId, CancellationToken ct);
++    Task<TaskStatisticsResponse> GetStatisticsAsync(
++        Guid projectId, Guid? actorUserId, CancellationToken ct);
+     Task UpdateAsync(Guid id, UpdateTaskRequest request, Guid actorUserId, CancellationToken ct);
+     Task ChangeStatusAsync(Guid id, ChangeStatusRequest request, CancellationToken ct);
+     Task AssignAsync(Guid id, AssignAssigneeRequest request, CancellationToken ct);
+diff --git a/services/ProjectTaskService/Services/TaskService.cs b/services/ProjectTaskService/Services/TaskService.cs
+index 11725ba..deb4e94 100644
+--- a/services/ProjectTaskService/Services/TaskService.cs
++++ b/services/ProjectTaskService/Services/TaskService.cs
+@@ -55,6 +55,28 @@ public class TaskService : ITaskService
+         return ToResponse(task, labels);
+     }
+ 
++    public async Task<TaskStatisticsResponse> GetStatisticsAsync(
++        Guid projectId, Guid? actorUserId, CancellationToken ct)
++    {
++        await GetProjectAsync(projectId, ct);
++        await CheckAccessAsync(actorUserId, projectId, ProjectAction.ViewTask, ct);
++
++        var counts = await _tasks.GetTaskCountsByStatusAsync(projectId, ct);
++        var byStatus = new TaskStatisticsByStatusResponse
++        {
++            Todo = counts.GetValueOrDefault(TaskItemStatus.TODO),
++            InProgress = counts.GetValueOrDefault(TaskItemStatus.IN_PROGRESS),
++            Review = counts.GetValueOrDefault(TaskItemStatus.REVIEW),
++            Done = counts.GetValueOrDefault(TaskItemStatus.DONE)
++        };
++
++        return new TaskStatisticsResponse
++        {
++            TotalCount = byStatus.Todo + byStatus.InProgress + byStatus.Review + byStatus.Done,
++            ByStatus = byStatus
++        };
++    }
++
+     public async Task UpdateAsync(Guid id, UpdateTaskRequest request, Guid actorUserId, CancellationToken ct)
+     {
+         RequireUser(actorUserId, "X-User-Id is required");
+diff --git a/tests/ProjectTaskService.Tests/TaskServiceTests.cs b/tests/ProjectTaskService.Tests/TaskServiceTests.cs
+index 0d58cb2..ed56bf4 100644
+--- a/tests/ProjectTaskService.Tests/TaskServiceTests.cs
++++ b/tests/ProjectTaskService.Tests/TaskServiceTests.cs
+@@ -107,6 +107,108 @@ public class TaskServiceTests
+         Assert.Equal("Bug", result.Labels[0].Name);
+     }
+ 
++    [Fact]
++    public async Task GetStatistics_EmptyProject_ReturnsAllStatusesWithZeroCounts()
++    {
++        using var db = NewDb();
++        db.Projects.Add(NewProject());
++        await db.SaveChangesAsync();
++
++        var result = await NewService(db)
++            .GetStatisticsAsync(ProjectId, OwnerId, CancellationToken.None);
++
++        Assert.Equal(0, result.TotalCount);
++        Assert.Equal(0, result.ByStatus.Todo);
++        Assert.Equal(0, result.ByStatus.InProgress);
++        Assert.Equal(0, result.ByStatus.Review);
++        Assert.Equal(0, result.ByStatus.Done);
++    }
++
++    [Fact]
++    public async Task GetStatistics_CountsStatusesForRequestedProjectOnly()
++    {
++        using var db = NewDb();
++        db.Projects.Add(NewProject());
++        db.Tasks.AddRange(
++            NewTask(TaskItemStatus.TODO),
++            NewTask(TaskItemStatus.TODO),
++            NewTask(TaskItemStatus.IN_PROGRESS),
++            NewTask(TaskItemStatus.REVIEW),
++            NewTask(TaskItemStatus.DONE),
++            NewTask(TaskItemStatus.DONE),
++            NewTask(TaskItemStatus.DONE),
++            NewTask(TaskItemStatus.TODO, projectId: Guid.NewGuid()));
++        await db.SaveChangesAsync();
++
++        var result = await NewService(db)
++            .GetStatisticsAsync(ProjectId, OwnerId, CancellationToken.None);
++
++        Assert.Equal(7, result.TotalCount);
++        Assert.Equal(2, result.ByStatus.Todo);
++        Assert.Equal(1, result.ByStatus.InProgress);
++        Assert.Equal(1, result.ByStatus.Review);
++        Assert.Equal(3, result.ByStatus.Done);
++    }
++
++    [Fact]
++    public async Task GetStatistics_ExcludesDeletedTasks()
++    {
++        using var db = NewDb();
++        db.Projects.Add(NewProject());
++        db.Tasks.AddRange(
++            NewTask(TaskItemStatus.TODO),
++            NewTask(TaskItemStatus.DONE, isDeleted: true));
++        await db.SaveChangesAsync();
++
++        var result = await NewService(db)
++            .GetStatisticsAsync(ProjectId, OwnerId, CancellationToken.None);
++
++        Assert.Equal(1, result.TotalCount);
++        Assert.Equal(1, result.ByStatus.Todo);
++        Assert.Equal(0, result.ByStatus.Done);
++    }
++
++    [Fact]
++    public async Task GetStatistics_RejectsMissingUser()
++    {
++        using var db = NewDb();
++        db.Projects.Add(NewProject());
++        await db.SaveChangesAsync();
++
++        var error = await Assert.ThrowsAsync<TaskOperationException>(() =>
++            NewService(db).GetStatisticsAsync(ProjectId, null, CancellationToken.None));
++
++        Assert.Equal(TaskErrorKind.Unauthorized, error.Kind);
++        Assert.Equal("USER_ID_REQUIRED", error.Code);
++    }
++
++    [Fact]
++    public async Task GetStatistics_RejectsForbiddenAccess()
++    {
++        using var db = NewDb();
++        db.Projects.Add(NewProject());
++        await db.SaveChangesAsync();
++
++        var error = await Assert.ThrowsAsync<TaskOperationException>(() =>
++            NewService(db, allowed: false)
++                .GetStatisticsAsync(ProjectId, OwnerId, CancellationToken.None));
++
++        Assert.Equal(TaskErrorKind.Forbidden, error.Kind);
++        Assert.Equal("ACCESS_DENIED", error.Code);
++    }
++
++    [Fact]
++    public async Task GetStatistics_ReturnsProjectNotFound()
++    {
++        using var db = NewDb();
++
++        var error = await Assert.ThrowsAsync<TaskOperationException>(() =>
++            NewService(db).GetStatisticsAsync(ProjectId, OwnerId, CancellationToken.None));
++
++        Assert.Equal(TaskErrorKind.NotFound, error.Kind);
++        Assert.Equal("PROJECT_NOT_FOUND", error.Code);
++    }
++
+     [Fact]
+     public async Task ChangeStatus_RejectsInvalidTransition()
+     {
+@@ -208,10 +310,13 @@ public class TaskServiceTests
+         CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
+     };
+ 
+-    private static TaskItem NewTask() => new()
++    private static TaskItem NewTask(
++        TaskItemStatus status = TaskItemStatus.TODO,
++        bool isDeleted = false,
++        Guid? projectId = null) => new()
+     {
+-        Id = Guid.NewGuid(), ProjectId = ProjectId, Title = "Task",
+-        CreatedByUserId = OwnerId, Status = TaskItemStatus.TODO,
++        Id = Guid.NewGuid(), ProjectId = projectId ?? ProjectId, Title = "Task",
++        CreatedByUserId = OwnerId, Status = status, IsDeleted = isDeleted,
+         CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
+     };
+ 
